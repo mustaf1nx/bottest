@@ -40,6 +40,7 @@ from userbot import AddOutcome, UserbotAdder
 
 BASE_DIR = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
+BOT_VERSION = "2.0 — персональные ссылки-заявки в чаты ОП"
 
 
 @dataclass(frozen=True)
@@ -1126,16 +1127,30 @@ async def set_op_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat = update.effective_chat
     if not message or not chat:
         return
+    LOGGER.info(
+        "Команда привязки чата от %s в чате %s, аргументы: %s",
+        update.effective_user.id if update.effective_user else "?",
+        chat.id,
+        context.args,
+    )
     if not await is_authorized_admin(update, context):
         await reply_with_connect_retry(message, "Команда доступна только администраторам.")
         return
     if not context.args:
         await reply_with_connect_retry(
             message,
-            "Использование: /setopchat <КОД_ОП> [chat_id]\n"
-            "Проще всего выполнить команду прямо в чате нужной ОП: "
-            "/setopchat SE\n"
-            "Чтобы отвязать чат: /setopchat SE off",
+            "🔗 <b>Привязка чата ОП</b>\n\n"
+            "Порядок действий:\n"
+            "1. Добавьте бота в чат ОП (без этого он не увидит там команды).\n"
+            "2. Сделайте бота администратором с правом "
+            "<b>«Приглашать пользователей»</b>.\n"
+            "3. Выполните <b>в этом же чате ОП</b>: <code>/setopchat SE</code>\n\n"
+            "Другие варианты:\n"
+            "• <code>/setopchat SE -1001234567890</code> — привязать по ID "
+            "(ID чата покажет команда /id, выполненная в нём)\n"
+            "• <code>/setopchat SE off</code> — отвязать\n"
+            "• /opchats — проверить все привязки",
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -1203,19 +1218,6 @@ async def describe_chat_readiness(
     return None
 
 
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Фидбек на нераспознанную команду вместо молчания."""
-    message = update.effective_message
-    if not message or not message.text:
-        return
-    attempted = message.text.split()[0]
-    await reply_with_connect_retry(
-        message,
-        f"❓ Команда {html.escape(attempted)} не найдена.\n"
-        "Список команд: /start",
-    )
-
-
 async def show_op_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/opchats — диагностика привязок и прав бота."""
     message = update.effective_message
@@ -1239,6 +1241,107 @@ async def show_op_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await reply_with_connect_retry(
         message,
         "🔗 <b>Чаты ОП:</b>\n" + "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+COMMAND_HELP = (
+    "🤖 <b>Команды бота</b>\n\n"
+    "<b>Чаты ОП:</b>\n"
+    "• /setopchat <code>КОД</code> — привязать чат ОП "
+    "(выполните прямо в чате нужной ОП)\n"
+    "  Синонимы: /setopgroup, /setgroup, /opchat\n"
+    "• /setopchat <code>КОД chat_id</code> — привязать по ID из другого чата\n"
+    "• /setopchat <code>КОД</code> off — отвязать\n"
+    "• /opchats — все привязки и проверка прав бота\n\n"
+    "<b>Остальное:</b>\n"
+    "• /ops — список ОП и ответственных\n"
+    "• /setopadmin <code>КОД @username</code> — назначить ответственного\n"
+    "• /id — ID чата и пользователя\n"
+    "• /version — версия и состояние бота\n"
+    "• /preview — пример приветствия\n"
+    "• /allowpm — открыть себе личные команды"
+)
+
+# Префиксы команд, на которые бот отвечает даже если такой команды у него нет.
+# Нужно, чтобы опечатка вроде /setopgroups не осталась без ответа, но при этом
+# бот не сыпал сообщениями на каждый /чужая_команда в большом чате.
+OWN_COMMAND_PREFIXES = (
+    "setop",
+    "setgroup",
+    "opchat",
+    "opgroup",
+    "bindchat",
+    "op",
+    "invite",
+    "join",
+    "version",
+    "help",
+)
+
+
+async def show_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Убедиться, что запущена именно новая сборка бота."""
+    message = update.effective_message
+    if not message:
+        return
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
+    settings: Settings = context.application.bot_data["settings"]
+    adder: UserbotAdder | None = context.application.bot_data.get("userbot")
+    all_ops = op_registry.get_all()
+    bound = [op for op in all_ops.values() if op.chat_id]
+
+    lines = [
+        f"🤖 <b>Сборка:</b> {BOT_VERSION}",
+        f"🔗 Чатов ОП привязано: <b>{len(bound)}</b> из {len(all_ops)}",
+        f"⏳ Время жизни ссылки: {settings.invite_ttl_seconds // 60} мин.",
+        f"💬 Ссылка в общий чат, если личка закрыта: "
+        f"{'да' if settings.invite_group_fallback else 'нет'}",
+        f"👤 Добавление по юзернейму: "
+        f"{'включено' if adder is not None and adder.ready else 'выключено'}",
+    ]
+    if not bound:
+        lines.append(
+            "\n⚠️ Ни один чат ОП не привязан — поэтому кнопки доступа "
+            "под карточкой ОП не появляются. Выполните /setopchat "
+            "<code>КОД</code> внутри чата нужной ОП."
+        )
+    await reply_with_connect_retry(
+        message, "\n".join(lines), parse_mode=ParseMode.HTML
+    )
+
+
+async def handle_unknown_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Ответить на команду, которой у бота нет, вместо молчания."""
+    message = update.effective_message
+    if not message or not message.text:
+        return
+
+    head = message.text.split()[0].lstrip("/")
+    name, _, mentioned_bot = head.partition("@")
+    name = name.lower()
+
+    bot_username = (context.bot.username or "").lower()
+    addressed = mentioned_bot.lower() == bot_username and bot_username != ""
+    is_private = message.chat.type == ChatType.PRIVATE
+    looks_like_ours = name.startswith(OWN_COMMAND_PREFIXES)
+
+    if not (is_private or addressed or looks_like_ours):
+        return
+
+    hint = ""
+    if name.startswith(("setop", "setgroup", "opchat", "opgroup", "bindchat")):
+        hint = (
+            "\n\n💡 Похоже, вы хотели привязать чат ОП. Правильно так — "
+            "выполните <b>внутри чата нужной ОП</b>:\n"
+            "<code>/setopchat SE</code>"
+        )
+
+    await reply_with_connect_retry(
+        message,
+        f"Не знаю команду <code>/{html.escape(name)}</code>.{hint}\n\n{COMMAND_HELP}",
         parse_mode=ParseMode.HTML,
     )
 
@@ -1314,6 +1417,18 @@ def create_application(settings: Settings) -> Application:
         if userbot is not None:
             await userbot.start()
         await invite_manager.sweep(app.bot)
+        bound = [op for op in op_registry.get_all().values() if op.chat_id]
+        LOGGER.info("Запущена сборка: %s", BOT_VERSION)
+        if bound:
+            LOGGER.info(
+                "Привязанные чаты ОП: %s",
+                ", ".join(f"{op.code}={op.chat_id}" for op in bound),
+            )
+        else:
+            LOGGER.warning(
+                "Ни один чат ОП не привязан — кнопки доступа появляться не будут. "
+                "Выполните /setopchat <КОД> внутри чата нужной ОП."
+            )
 
     async def on_shutdown(app: Application) -> None:
         if userbot is not None:
@@ -1345,9 +1460,16 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("id", show_ids))
     application.add_handler(CommandHandler("ops", show_ops))
     application.add_handler(CommandHandler("setopadmin", set_op_admin))
-    application.add_handler(CommandHandler("setopchat", set_op_chat))
-    application.add_handler(CommandHandler("setopgroup", set_op_chat))  # алиас /setopchat
-    application.add_handler(CommandHandler("opchats", show_op_chats))
+    application.add_handler(
+        CommandHandler(
+            ["setopchat", "setopgroup", "setgroup", "opchat", "bindchat"],
+            set_op_chat,
+        )
+    )
+    application.add_handler(
+        CommandHandler(["opchats", "opgroups", "chats"], show_op_chats)
+    )
+    application.add_handler(CommandHandler("version", show_version))
     application.add_handler(
         CallbackQueryHandler(handle_join_button, pattern=rf"^{JOIN_CALLBACK_PREFIX}:")
     )
@@ -1355,11 +1477,14 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members)
     )
+    # Ставится после всех известных команд: сработает только если ни одна
+    # из них не подошла, иначе админ снова останется без ответа.
+    application.add_handler(
+        MessageHandler(filters.COMMAND, handle_unknown_command)
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_op_message)
     )
-    # Ловит любую команду, не подошедшую под хендлеры выше — молчания больше не будет.
-    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     application.add_error_handler(log_error)
     return application
 
