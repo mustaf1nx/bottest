@@ -1203,6 +1203,19 @@ async def describe_chat_readiness(
     return None
 
 
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Фидбек на нераспознанную команду вместо молчания."""
+    message = update.effective_message
+    if not message or not message.text:
+        return
+    attempted = message.text.split()[0]
+    await reply_with_connect_retry(
+        message,
+        f"❓ Команда {html.escape(attempted)} не найдена.\n"
+        "Список команд: /start",
+    )
+
+
 async def show_op_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/opchats — диагностика привязок и прав бота."""
     message = update.effective_message
@@ -1333,6 +1346,7 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("ops", show_ops))
     application.add_handler(CommandHandler("setopadmin", set_op_admin))
     application.add_handler(CommandHandler("setopchat", set_op_chat))
+    application.add_handler(CommandHandler("setopgroup", set_op_chat))  # алиас /setopchat
     application.add_handler(CommandHandler("opchats", show_op_chats))
     application.add_handler(
         CallbackQueryHandler(handle_join_button, pattern=rf"^{JOIN_CALLBACK_PREFIX}:")
@@ -1344,6 +1358,8 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_op_message)
     )
+    # Ловит любую команду, не подошедшую под хендлеры выше — молчания больше не будет.
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     application.add_error_handler(log_error)
     return application
 
