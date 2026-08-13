@@ -591,7 +591,8 @@ CS_CODE_PATTERN = re.compile(r"^\s*(cs|кс)\s*$", re.IGNORECASE)
 
 AMBIGUOUS_CS_QUESTION = (
     "Вы о <b>Computer Science (IT)</b> или <b>Cybersecurity (CS)</b>?\n\n"
-    "Ответьте, выбрав один из вариантов."
+    "Ответьте, выбрав один из вариантов.\n\n"
+    "💡 Ответь на это сообщение (Reply), чтобы узнать своего ответственного админа!"
 )
 
 
