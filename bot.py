@@ -9,6 +9,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatMemberStatus, ChatType, ParseMode
-from telegram.error import Forbidden, NetworkError, TelegramError, TimedOut
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -505,15 +506,56 @@ def is_connect_timeout(error: BaseException) -> bool:
 
 
 async def reply_with_connect_retry(message: object, text: str, **kwargs: object) -> None:
-    """Retry failures that happened due to temporary connection or network issues."""
-    retry_delays = (1.0, 2.0)
-    for attempt in range(len(retry_delays) + 1):
+    """Retry failures that happened due to temporary connection/network issues,
+    and separately back off correctly on Telegram flood control.
+
+    ``RetryAfter`` (HTTP 429, "подожди N секунд") is NOT a subclass of
+    ``NetworkError`` in python-telegram-bot — it inherits directly from
+    ``TelegramError``. Without handling it explicitly it propagates
+    immediately and aborts whatever loop called us, e.g. greeting a batch of
+    many new members at once (exactly the "много человек в чате" scenario)
+    would silently drop everyone after the first flood-limited member.
+
+    ``BadRequest`` *is* (surprisingly) a subclass of ``NetworkError`` in this
+    library, so it's excluded explicitly below — retrying a malformed
+    request (bad HTML entities, etc.) only wastes time, it will never
+    succeed on retry.
+    """
+    connection_retry_delays = (1.0, 2.0)
+    max_flood_retries = 3
+    connection_attempt = 0
+    flood_attempt = 0
+    while True:
         try:
             return await message.reply_text(text, **kwargs)  # type: ignore[attr-defined,no-any-return]
-        except NetworkError as error:
-            if not is_connection_error(error) or attempt == len(retry_delays):
+        except RetryAfter as error:
+            flood_attempt += 1
+            if flood_attempt > max_flood_retries:
                 raise
-            delay = retry_delays[attempt]
+            raw_delay = error.retry_after
+            # PTB is migrating `retry_after` from a plain number to a
+            # `datetime.timedelta` (opt-in via PTB_TIMEDELTA=true today,
+            # default in a future major version) — handle both.
+            seconds = (
+                raw_delay.total_seconds()
+                if isinstance(raw_delay, timedelta)
+                else float(raw_delay)
+            )
+            delay = max(seconds, 1.0)
+            LOGGER.warning(
+                "Ограничение Telegram (flood control): жду %.0f с перед повтором отправки",
+                delay,
+            )
+            await asyncio.sleep(delay)
+        except NetworkError as error:
+            if (
+                isinstance(error, BadRequest)
+                or not is_connection_error(error)
+                or connection_attempt >= len(connection_retry_delays)
+            ):
+                raise
+            delay = connection_retry_delays[connection_attempt]
+            connection_attempt += 1
             LOGGER.warning(
                 "Telegram недоступен при подключении; повтор отправки через %.0f с",
                 delay,
@@ -557,8 +599,17 @@ async def deliver_invite_via_deep_link(
     update: Update, context: ContextTypes.DEFAULT_TYPE, op_code: str
 ) -> None:
     """/start join_<КОД_ОП> — человек пришёл по deep-link кнопке из общего
-    чата. Мы уже в личке с ним, так что просто выдаём и сразу доставляем
-    персональную ссылку, без дополнительных Reply и переключений чатов."""
+    чата.
+
+    ВАЖНО: этот путь НЕ создаёт новую заявку. Он только забирает уже
+    выпущенную — а выпустить её мог только ``handle_join_button``, который
+    сначала проверяет, что нажавший реально состоит в общем чате первого
+    курса. Если тут выдавать ссылку с нуля по одному только коду ОП, любой
+    посторонний человек, просто угадавший короткий код (SE, IT, CS...) и
+    юзернейм бота, смог бы написать боту в личку и получить пропуск в чат
+    ОП, ни разу не появившись в общем чате и не пройдя никакой проверки —
+    ровно то, чего мы стараемся избежать в переполненной группе.
+    """
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
@@ -579,24 +630,29 @@ async def deliver_invite_via_deep_link(
         return
 
     manager: InviteManager = context.application.bot_data["invites"]
-    try:
-        issued = await manager.issue(context.bot, op.code, op.chat_id, user.id)
-    except InviteError as error:
-        await reply_with_connect_retry(message, str(error))
+    pending = manager.find_active(user.id, op.chat_id)
+    if pending is None:
+        await reply_with_connect_retry(
+            message,
+            "У вас нет активной заявки на этот чат. Сначала ответьте в общем "
+            f"чате первого курса своей ОП (<b>{html.escape(op.code)}</b>) и "
+            "нажмите кнопку доступа там — я сразу пришлю ссылку сюда.",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     user_mention = user.mention_html()
     try:
         # source_message=None: мы уже в личке, фолбэк в чат тут не нужен —
         # прямая отправка либо сработает, либо явно упадёт с ошибкой.
-        notice = await deliver_invite(context, issued.invite, op, user_mention, None)
+        notice = await deliver_invite(context, pending, op, user_mention, None)
     except Exception:
         LOGGER.exception(
             "Не удалось доставить ссылку через /start пользователю %s (ОП %s)",
             user.id,
             op.code,
         )
-        await manager.retire(context.bot, issued.invite)
+        await manager.retire(context.bot, pending)
         await reply_with_connect_retry(
             message,
             "Не получилось отправить ссылку — сбой соединения с Telegram. "
@@ -921,18 +977,32 @@ async def handle_join_button(
         return
 
     # Необязательный путь: аккаунт-помощник добавляет по юзернейму сам.
+    # Все вызовы userbot идут через общую блокировку (см. UserbotAdder), так
+    # что при одновременных кликах нескольких человек они выстраиваются в
+    # очередь. Telegram ожидает ответ на нажатие кнопки в пределах ~секунд,
+    # поэтому ограничиваем ожидание таймаутом и при его истечении просто
+    # переходим к обычной ссылке-заявке, а не подвешиваем кнопку человеку.
     adder: UserbotAdder | None = context.application.bot_data.get("userbot")
     username = query.from_user.username
     if adder is not None and adder.ready and username:
-        result = await adder.add_by_username(username, op.chat_id)
-        if result.ok:
-            await query.answer(f"Готово, вы добавлены в чат {op.code} ✅", show_alert=True)
-            return
-        LOGGER.info(
-            "Добавление @%s не удалось (%s), переходим к ссылке",
-            username,
-            result.outcome.value,
-        )
+        try:
+            result = await asyncio.wait_for(
+                adder.add_by_username(username, op.chat_id), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            LOGGER.info(
+                "Добавление @%s через userbot не уложилось в таймаут, переходим к ссылке",
+                username,
+            )
+        else:
+            if result.ok:
+                await query.answer(f"Готово, вы добавлены в чат {op.code} ✅", show_alert=True)
+                return
+            LOGGER.info(
+                "Добавление @%s не удалось (%s), переходим к ссылке",
+                username,
+                result.outcome.value,
+            )
 
     manager: InviteManager = context.application.bot_data["invites"]
     try:
@@ -1117,25 +1187,38 @@ async def handle_op_message(
         keyboard = build_join_keyboard(matched_ops[0], user_id)
     else:
         items = []
+        buttons = []
         for op in matched_ops:
             admin_tag = format_admin_tag(op.admin)
             items.append(
                 f"• <b>{html.escape(op.code)}</b> ({html.escape(op.name)})\n"
                 f"  🏫 <i>{html.escape(op.school)}</i> — {admin_tag}"
             )
+            op_keyboard = build_join_keyboard(op, user_id)
+            if op_keyboard:
+                buttons.extend(op_keyboard.inline_keyboard)
+        if buttons:
+            keyboard = InlineKeyboardMarkup(buttons)
         formatted_items = "\n\n".join(items)
         reply_text = (
             f"Привет, {user_mention}! 👋\n\n"
-            f"📍 <b>Найдены направления (ОП):</b>\n\n{formatted_items}"
+            f"📍 <b>Найдены направления (ОП):</b>\n\n{formatted_items}\n\n"
+            "Если это не то, что вы имели в виду — ответьте (Reply) на это "
+            "сообщение точным кодом вашей ОП."
         )
 
-    await reply_with_connect_retry(
+    sent_msg = await reply_with_connect_retry(
         message,
         reply_text,
         parse_mode=ParseMode.HTML,
         reply_to_message_id=message.message_id,
         reply_markup=keyboard,
     )
+    if len(matched_ops) > 1 and sent_msg and hasattr(sent_msg, "message_id"):
+        # Анкорим карточку со списком вариантов на этого же участника —
+        # чтобы Reply с уточнённым кодом ОП, предложенный в тексте выше,
+        # действительно обрабатывался, а не молча игнорировался.
+        tracker.add_welcome_message(chat_id, sent_msg.message_id, user_id)
 
 
 async def show_ops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1403,26 +1486,38 @@ async def welcome_new_members(
     op = op_registry.find_by_chat_id(message.chat.id)
 
     for member in message.new_chat_members:
-        if member.id == bot_id:
-            await reply_with_connect_retry(
-                message,
-                "✅ Бот подключён. Я буду приветствовать новых участников. "
-                "Администратор может выполнить /allowpm, чтобы открыть личные "
-                "команды /start и /preview.",
+        try:
+            if member.id == bot_id:
+                await reply_with_connect_retry(
+                    message,
+                    "✅ Бот подключён. Я буду приветствовать новых участников. "
+                    "Администратор может выполнить /allowpm, чтобы открыть личные "
+                    "команды /start и /preview.",
+                )
+                continue
+            if op is not None:
+                # Это чат конкретной ОП — не спрашиваем код ОП и не ждём Reply,
+                # это только для общего чата первого курса.
+                text = build_op_chat_welcome_text(member.mention_html(), op)
+                await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
+                continue
+            text = build_welcome_text(chain, member.mention_html(), settings.max_words)
+            sent_msg = await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
+            if sent_msg and hasattr(sent_msg, "message_id"):
+                tracker.add_welcome_message(message.chat.id, sent_msg.message_id, member.id)
+            else:
+                tracker.add_user(message.chat.id, member.id)
+        except TelegramError as error:
+            # Не даём сбою на одном участнике (флуд-лимит, таймаут и т.п.,
+            # исчерпавший все повторы) сорвать приветствие остальных членов
+            # этой же пачки — актуально именно при массовом добавлении в
+            # переполненную группу.
+            LOGGER.error(
+                "Не удалось поприветствовать %s в чате %s: %s",
+                member.id,
+                message.chat.id,
+                error,
             )
-            continue
-        if op is not None:
-            # Это чат конкретной ОП — не спрашиваем код ОП и не ждём Reply,
-            # это только для общего чата первого курса.
-            text = build_op_chat_welcome_text(member.mention_html(), op)
-            await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
-            continue
-        text = build_welcome_text(chain, member.mention_html(), settings.max_words)
-        sent_msg = await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
-        if sent_msg and hasattr(sent_msg, "message_id"):
-            tracker.add_welcome_message(message.chat.id, sent_msg.message_id, member.id)
-        else:
-            tracker.add_user(message.chat.id, member.id)
 
 
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
