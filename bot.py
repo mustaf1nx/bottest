@@ -526,6 +526,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not message or not user:
         return
+
+    if message.chat.type == ChatType.PRIVATE and context.args:
+        payload = context.args[0]
+        if payload.startswith(JOIN_START_PREFIX):
+            op_code = payload[len(JOIN_START_PREFIX):].upper()
+            await deliver_invite_via_deep_link(update, context, op_code)
+            return
+
     registry: AdminRegistry = context.application.bot_data["admins"]
     if message.chat.type == ChatType.PRIVATE and not registry.contains(user.id):
         # Обычным студентам личный чат нужен, чтобы получать сюда ссылку на
@@ -543,6 +551,59 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я подключён и приветствую новых участников фразами, созданными "
         "марковской цепью. Команда проверки: /preview"
     )
+
+
+async def deliver_invite_via_deep_link(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, op_code: str
+) -> None:
+    """/start join_<КОД_ОП> — человек пришёл по deep-link кнопке из общего
+    чата. Мы уже в личке с ним, так что просто выдаём и сразу доставляем
+    персональную ссылку, без дополнительных Reply и переключений чатов."""
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user:
+        return
+
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
+    op = op_registry.get(op_code)
+    if op is None or not op.chat_id:
+        await reply_with_connect_retry(
+            message,
+            f"❌ ОП '{html.escape(op_code)}' не найдена или чат ещё не подключён. "
+            "Список: /ops",
+        )
+        return
+
+    if await is_chat_member(context.bot, op.chat_id, user.id):
+        await reply_with_connect_retry(message, "Вы уже состоите в чате этой ОП 🙂")
+        return
+
+    manager: InviteManager = context.application.bot_data["invites"]
+    try:
+        issued = await manager.issue(context.bot, op.code, op.chat_id, user.id)
+    except InviteError as error:
+        await reply_with_connect_retry(message, str(error))
+        return
+
+    user_mention = user.mention_html()
+    try:
+        # source_message=None: мы уже в личке, фолбэк в чат тут не нужен —
+        # прямая отправка либо сработает, либо явно упадёт с ошибкой.
+        notice = await deliver_invite(context, issued.invite, op, user_mention, None)
+    except Exception:
+        LOGGER.exception(
+            "Не удалось доставить ссылку через /start пользователю %s (ОП %s)",
+            user.id,
+            op.code,
+        )
+        await manager.retire(context.bot, issued.invite)
+        await reply_with_connect_retry(
+            message,
+            "Не получилось отправить ссылку — сбой соединения с Telegram. "
+            "Нажмите кнопку в чате ещё раз через минуту.",
+        )
+        return
+    await reply_with_connect_retry(message, notice)
 
 
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -651,6 +712,15 @@ def build_op_response(user_mention: str, op: OPProgram) -> str:
 # --------------------------------------------------------------------------- #
 
 JOIN_CALLBACK_PREFIX = "join"
+JOIN_START_PREFIX = "join_"
+
+
+def build_start_deep_link(bot_username: str, op_code: str) -> str:
+    """Ссылка вида t.me/bot?start=join_SE — открывает диалог с ботом и жмёт
+    Start за пользователя одним тапом, без ручного набора команды."""
+    return f"https://t.me/{bot_username}?start={JOIN_START_PREFIX}{op_code}"
+
+
 MEMBER_STATUSES = (
     ChatMemberStatus.MEMBER,
     ChatMemberStatus.ADMINISTRATOR,
@@ -725,6 +795,29 @@ async def deliver_invite(
             "Напишите мне в личные сообщения /start и нажмите кнопку ещё раз — "
             "ссылку я отправлю туда."
         )
+
+    bot_username = context.bot.username
+    if bot_username:
+        # Не публикуем ссылку в чате вообще: только кнопка-переход, которая
+        # одним тапом открывает диалог с ботом и нажимает Start за человека
+        # (Telegram deep link). /start с этим параметром сам увидит, для
+        # какой ОП нужна ссылка, и пришлёт её в личку.
+        deep_link = build_start_deep_link(bot_username, op.code)
+        prompt_text = (
+            f"{user_mention}, чтобы получить персональную ссылку в чат "
+            f"<b>{html.escape(op.code)}</b>, откройте диалог со мной и нажмите "
+            "Start — ссылку пришлю сразу в личные сообщения."
+        )
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("▶️ Открыть бота и получить ссылку", url=deep_link)]]
+        )
+        await reply_with_connect_retry(
+            source_message,
+            prompt_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        return "Нажмите кнопку в чате, чтобы открыть бота и получить ссылку в личные сообщения."
 
     group_text = (
         f"{user_mention}, ваша персональная ссылка в чат "
