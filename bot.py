@@ -803,13 +803,36 @@ async def deliver_invite(
         # (Telegram deep link). /start с этим параметром сам увидит, для
         # какой ОП нужна ссылка, и пришлёт её в личку.
         deep_link = build_start_deep_link(bot_username, op.code)
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("▶️ Открыть бота и получить ссылку", url=deep_link)]]
+        )
+        addition = (
+            "\n\n▶️ Чтобы получить ссылку, откройте диалог со мной и нажмите "
+            "Start — пришлю её сразу в личные сообщения."
+        )
+        # Предпочитаем дописать подсказку прямо в исходную карточку ОП и
+        # заменить в ней кнопку — одним сообщением вместо двух. Если
+        # редактирование не удалось (карточка слишком старая для правки,
+        # у неё другой formatting и т.п.) — не страшно, шлём отдельным
+        # сообщением как запасной вариант.
+        original_html = getattr(source_message, "text_html", None)
+        if original_html:
+            try:
+                await source_message.edit_text(
+                    original_html + addition,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+                return (
+                    "Нажмите кнопку в этом сообщении, чтобы открыть бота и "
+                    "получить ссылку в личные сообщения."
+                )
+            except TelegramError as error:
+                LOGGER.debug("Не удалось отредактировать карточку ОП: %s", error)
         prompt_text = (
             f"{user_mention}, чтобы получить персональную ссылку в чат "
             f"<b>{html.escape(op.code)}</b>, откройте диалог со мной и нажмите "
             "Start — ссылку пришлю сразу в личные сообщения."
-        )
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("▶️ Открыть бота и получить ссылку", url=deep_link)]]
         )
         await reply_with_connect_retry(
             source_message,
