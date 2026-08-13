@@ -17,6 +17,7 @@ from telegram.constants import ChatMemberStatus, ChatType, ParseMode
 from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
+    ChatJoinRequestHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -229,6 +230,41 @@ DEFAULT_OPS: dict[str, dict[str, Any]] = {
         "aliases": ["DL", "ДЛ", "Digital Jurisprudence", "длшник", "юриспруденция", "диджитал юриспруденция", "цифровая юриспруденция", "цифровые юристы"],
     },
 }
+
+
+@dataclass(frozen=True)
+class PendingJoin:
+    """Tracks who a bot-generated join-request invite link was issued to, so
+    the ChatJoinRequestHandler can tell a legitimate auto-approval apart from
+    an unrelated join request to the same group."""
+
+    user_id: int
+    group_id: int
+    op_code: str
+
+
+class PendingJoinRegistry:
+    """In-memory map of invite_link -> PendingJoin. Not persisted to disk on
+    purpose: these are single-use, short-lived tokens, so losing them on a
+    restart just means the (rare) in-flight request falls back to manual
+    admin approval instead of being silently auto-approved."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, PendingJoin] = {}
+
+    def add(self, invite_link: str, entry: PendingJoin) -> None:
+        self._pending[invite_link] = entry
+
+    def pop_matching(self, invite_link: str | None, user_id: int, group_id: int) -> PendingJoin | None:
+        """Return and remove the entry only if it exists AND matches both the
+        requesting user and the group. Never approve on a partial match."""
+        if invite_link is None:
+            return None
+        entry = self._pending.get(invite_link)
+        if entry is None or entry.user_id != user_id or entry.group_id != group_id:
+            return None
+        del self._pending[invite_link]
+        return entry
 
 
 @dataclass(frozen=True)
@@ -507,11 +543,14 @@ async def send_op_invite_dm(
         return
 
     user = message.from_user
+    if user is None:
+        return
+
     try:
         invite = await context.bot.create_chat_invite_link(
             chat_id=op.group_id,
-            member_limit=1,
-            name=f"onboard-{user.id if user else 'unknown'}",
+            name=f"onboard-{user.id}",
+            creates_join_request=True,
         )
     except TelegramError as error:
         LOGGER.warning(
@@ -529,11 +568,17 @@ async def send_op_invite_dm(
         )
         return
 
+    pending: PendingJoinRegistry = context.application.bot_data["pending_joins"]
+    pending.add(invite.invite_link, PendingJoin(user_id=user.id, group_id=op.group_id, op_code=op.code))
+
     await reply_with_connect_retry(
         message,
-        f"🔗 Вот ваша персональная одноразовая ссылка для вступления в группу "
+        f"🔗 Вот ваша персональная ссылка для вступления в группу "
         f"<b>{html.escape(op.code)} ({html.escape(op.name)})</b>:\n{invite.invite_link}\n\n"
-        "Ссылка одноразовая и предназначена только для вас — не пересылайте её.",
+        "Перейдите по ней и нажмите «Подать заявку» — бот сразу же автоматически "
+        "примет именно вашу заявку, вручную ничего подтверждать не нужно. "
+        "Ссылка привязана только к вам: если её кто-то перешлёт, чужая заявка "
+        "автоматически одобрена не будет и уйдёт на ручную проверку администраторам.",
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
@@ -1094,6 +1139,56 @@ async def welcome_new_members(
             tracker.add_user(message.chat.id, member.id)
 
 
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Auto-approve a join request only if it exactly matches a pending
+    invite link we generated for that specific user and group in
+    `send_op_invite_dm`. Anything else (someone using a stale/forwarded link,
+    or joining the group through some other route) is left untouched for a
+    human admin to review in the group's normal 'Requests to join' list —
+    we never approve a request we didn't explicitly issue."""
+    request = update.chat_join_request
+    if request is None:
+        return
+
+    invite_link = request.invite_link.invite_link if request.invite_link else None
+    pending: PendingJoinRegistry = context.application.bot_data["pending_joins"]
+    entry = pending.pop_matching(invite_link, request.from_user.id, request.chat.id)
+    if entry is None:
+        LOGGER.info(
+            "Заявка на вступление в чат %s от пользователя %s не распознана "
+            "автоматически — оставлена на ручное рассмотрение.",
+            request.chat.id,
+            request.from_user.id,
+        )
+        return
+
+    try:
+        await context.bot.approve_chat_join_request(request.chat.id, request.from_user.id)
+    except TelegramError as error:
+        LOGGER.warning("Не удалось одобрить заявку на вступление: %s", error)
+        return
+
+    # Revoke the link so it can't be reused even if someone else has it.
+    if invite_link:
+        try:
+            await context.bot.revoke_chat_invite_link(request.chat.id, invite_link)
+        except TelegramError:
+            pass
+
+    try:
+        await context.bot.send_message(
+            request.from_user.id,
+            f"✅ Заявка одобрена — добро пожаловать в группу "
+            f"<b>{html.escape(entry.op_code)}</b>!",
+            parse_mode=ParseMode.HTML,
+        )
+    except TelegramError:
+        # The user may not have started a chat with the bot yet in some
+        # edge case, or has blocked it — not fatal, they're already in the
+        # group either way.
+        pass
+
+
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.error and is_connection_error(context.error):
         LOGGER.warning("Сетевая ошибка при взаимодействии с Telegram: %s", context.error)
@@ -1109,6 +1204,7 @@ def create_application(settings: Settings) -> Application:
     admins = AdminRegistry(settings.admins_path, settings.initial_admin_ids)
     op_registry = OPRegistry(settings.op_admins_path)
     welcome_tracker = WelcomeTracker(max_messages=5)
+    pending_joins = PendingJoinRegistry()
     request = HTTPXRequest(
         connect_timeout=20,
         read_timeout=20,
@@ -1135,6 +1231,7 @@ def create_application(settings: Settings) -> Application:
             "admins": admins,
             "op_registry": op_registry,
             "welcome_tracker": welcome_tracker,
+            "pending_joins": pending_joins,
             "settings": settings,
         }
     )
@@ -1151,6 +1248,7 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_op_message)
     )
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
     application.add_error_handler(log_error)
     return application
 
