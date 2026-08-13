@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import Message, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatMemberStatus, ChatType, ParseMode
-from telegram.error import NetworkError, TelegramError, TimedOut
+from telegram.error import Forbidden, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -953,12 +953,13 @@ async def set_op_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         LOGGER.warning("Не удалось проверить права бота в чате %s: %s", chat.id, error)
 
     op_registry: OPRegistry = context.application.bot_data["op_registry"]
-    if op_registry.set_group_id(code, chat.id):
+    op = op_registry.get(code)
+    if op is not None and op_registry.set_group_id(code, chat.id):
         await reply_with_connect_retry(
             message,
-            f"✅ Группа «{html.escape(chat.title or str(chat.id))}» привязана к ОП "
-            f"<b>{html.escape(code)}</b>. Теперь студентам будут автоматически "
-            "выдаваться одноразовые ссылки для вступления.",
+            f"✅ Эта группа закреплена как группа ОП <b>{html.escape(code)}</b> "
+            f"({html.escape(op.name)}). Теперь студентам, которые назвали эту ОП, "
+            "будет автоматически выдаваться одноразовая ссылка для вступления сюда.",
             parse_mode=ParseMode.HTML,
         )
     else:
@@ -979,7 +980,13 @@ async def welcome_new_members(
     chain: MarkovChain = context.application.bot_data["greeting_chain"]
     settings: Settings = context.application.bot_data["settings"]
     tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
     bot_id = context.bot.id
+
+    # If this chat is itself a specific OP's own group (linked via
+    # /setopgroup), joining it already tells us the member's OP — no need
+    # to ask them again, unlike the general first-year onboarding chat.
+    own_op = op_registry.find_by_group_id(message.chat.id)
 
     for member in message.new_chat_members:
         if member.id == bot_id:
@@ -990,7 +997,19 @@ async def welcome_new_members(
                 "команды /start и /preview.",
             )
             continue
+
         text = build_welcome_text(chain, member.mention_html(), settings.max_words)
+        if own_op is not None:
+            text += (
+                f"\n\nВы в группе <b>{html.escape(own_op.code)}</b> "
+                f"({html.escape(own_op.name)}) — всё уже настроено, отвечать не нужно 🙂"
+            )
+            await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
+            # Deliberately do NOT call tracker.add_welcome_message/add_user
+            # here — that's what puts a member "awaiting OP answer", and
+            # this chat already implies their OP, so we skip asking.
+            continue
+
         sent_msg = await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
         if sent_msg and hasattr(sent_msg, "message_id"):
             tracker.add_welcome_message(message.chat.id, sent_msg.message_id, member.id)
@@ -1040,6 +1059,7 @@ def create_application(settings: Settings) -> Application:
             "op_registry": op_registry,
             "welcome_tracker": welcome_tracker,
             "settings": settings,
+            "pending_invites": {},
         }
     )
     application.add_handler(CommandHandler("start", start))
