@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
-from telegram.error import NetworkError, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
 from bot import (
     AdminRegistry,
     OPRegistry,
@@ -157,6 +157,50 @@ class OPRegistryTests(unittest.IsolatedAsyncioTestCase):
             called_text = update_new_user.effective_message.reply_text.call_args[0][0]
             self.assertIn("EE", called_text)
             self.assertIn("@dhshrbrhr", called_text)
+
+    async def test_handle_op_message_multi_match_includes_join_buttons(self) -> None:
+        """Regression test: an ambiguous reply that matches more than one OP
+        must still give the student a way to actually join — previously the
+        multi-match branch built the text list but never attached any join
+        button at all, leaving the student stuck."""
+        from bot import WelcomeTracker
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(path)
+            registry.set_chat("SE", -1001111111111, "SE chat")
+            registry.set_chat("IT", -1002222222222, "IT chat")
+            tracker = WelcomeTracker(max_messages=5)
+
+            chat_id = 100
+            welcome_msg_id = 555
+            user_id = 123
+            tracker.add_welcome_message(chat_id, welcome_msg_id, user_id)
+
+            context = MagicMock()
+            context.application.bot_data = {
+                "op_registry": registry,
+                "welcome_tracker": tracker,
+            }
+
+            update = MagicMock()
+            update.effective_message.chat.id = chat_id
+            update.effective_message.from_user.id = user_id
+            update.effective_message.from_user.is_bot = False
+            update.effective_message.from_user.mention_html.return_value = "@student"
+            update.effective_message.reply_to_message.message_id = welcome_msg_id
+            update.effective_message.text = "Я между SE и IT, не уверен"
+            update.effective_message.reply_text = AsyncMock()
+
+            await handle_op_message(update, context)
+            update.effective_message.reply_text.assert_called_once()
+            _, kwargs = update.effective_message.reply_text.call_args
+            keyboard = kwargs.get("reply_markup")
+            self.assertIsNotNone(keyboard)
+            all_buttons = [b for row in keyboard.inline_keyboard for b in row]
+            self.assertEqual(len(all_buttons), 2)
+            codes_in_buttons = {b.callback_data.split(":")[1] for b in all_buttons}
+            self.assertEqual(codes_in_buttons, {"SE", "IT"})
 
     async def test_question_patterns_are_ignored(self) -> None:
         from bot import WelcomeTracker
@@ -354,6 +398,89 @@ class OPRegistryTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+class DeepLinkSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_deep_link_refuses_without_prior_group_verification(self) -> None:
+        """Regression test for the main security gap: /start join_<CODE> in
+        DM must NOT be able to mint a fresh invite by itself. OP codes are
+        short and guessable, and a bare deep link handler previously issued
+        a brand new invite to anyone who typed it, without ever checking
+        they belong to the crowded main chat. It must only ever hand over an
+        invite that was already issued by the (verified) button click in
+        the group — never create one from scratch."""
+        from bot import deliver_invite_via_deep_link
+        from invites import InviteManager
+
+        with tempfile.TemporaryDirectory() as directory:
+            op_path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(op_path)
+            registry.set_chat("SE", -1001111111111, "SE chat")
+
+            invites_path = Path(directory) / "invites.json"
+            manager = InviteManager(invites_path)
+
+            context = MagicMock()
+            context.bot.get_chat_member = AsyncMock(side_effect=TelegramError("not found"))
+            context.application.bot_data = {
+                "op_registry": registry,
+                "invites": manager,
+            }
+
+            update = MagicMock()
+            update.effective_message.reply_text = AsyncMock()
+            update.effective_user.id = 42
+            update.effective_user.mention_html.return_value = "@sneaky"
+
+            await deliver_invite_via_deep_link(update, context, "SE")
+
+            update.effective_message.reply_text.assert_called_once()
+            called_text = update.effective_message.reply_text.call_args[0][0]
+            self.assertIn("нет активной заявки", called_text.lower())
+            context.bot.create_chat_invite_link.assert_not_called()
+
+    async def test_deep_link_delivers_a_previously_issued_invite(self) -> None:
+        """The legitimate path still works: once the group button issued an
+        invite for this exact user/chat, the deep link in DM must deliver
+        it."""
+        from bot import deliver_invite_via_deep_link
+        from invites import InviteManager
+
+        with tempfile.TemporaryDirectory() as directory:
+            op_path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(op_path)
+            registry.set_chat("SE", -1001111111111, "SE chat")
+
+            invites_path = Path(directory) / "invites.json"
+            manager = InviteManager(invites_path)
+            issued = await manager.issue(
+                bot=AsyncMock(create_chat_invite_link=AsyncMock(
+                    return_value=MagicMock(invite_link="https://t.me/joinchat/abc")
+                )),
+                op_code="SE",
+                target_chat_id=-1001111111111,
+                user_id=42,
+            )
+
+            context = MagicMock()
+            context.bot.get_chat_member = AsyncMock(side_effect=TelegramError("not found"))
+            context.bot.send_message = AsyncMock()
+            context.application.bot_data = {
+                "op_registry": registry,
+                "invites": manager,
+                "settings": MagicMock(invite_group_fallback=True),
+            }
+
+            update = MagicMock()
+            update.effective_message.reply_text = AsyncMock()
+            update.effective_user.id = 42
+            update.effective_user.mention_html.return_value = "@student"
+
+            await deliver_invite_via_deep_link(update, context, "SE")
+
+            context.bot.send_message.assert_called_once()
+            _, kwargs = context.bot.send_message.call_args
+            self.assertIn(issued.invite.invite_link, kwargs["text"])
+
+
 class NetworkErrorHandlingTests(unittest.IsolatedAsyncioTestCase):
     def test_is_connection_error_detection(self) -> None:
         class DummyConnectError(Exception):
@@ -401,6 +528,38 @@ class NetworkErrorHandlingTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NetworkError):
             await reply_with_connect_retry(mock_message, "Hello")
         self.assertEqual(mock_message.reply_text.call_count, 3)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_reply_with_connect_retry_backs_off_on_flood_control(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """RetryAfter is not a NetworkError subclass in PTB; make sure it's
+        still caught and retried with the server-requested delay, instead of
+        propagating immediately and aborting a whole batch of sends."""
+        mock_message = MagicMock()
+        mock_message.reply_text = AsyncMock(
+            side_effect=[RetryAfter(5), None]
+        )
+        await reply_with_connect_retry(mock_message, "Hello")
+        self.assertEqual(mock_message.reply_text.call_count, 2)
+        mock_sleep.assert_called_once()
+        self.assertGreaterEqual(mock_sleep.call_args.args[0], 5)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_reply_with_connect_retry_does_not_retry_bad_request(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """BadRequest is (surprisingly) a NetworkError subclass in PTB, but a
+        malformed request will never succeed on retry — it must raise
+        immediately, not burn through the connection-retry delays."""
+        mock_message = MagicMock()
+        mock_message.reply_text = AsyncMock(
+            side_effect=BadRequest("Can't parse entities")
+        )
+        with self.assertRaises(BadRequest):
+            await reply_with_connect_retry(mock_message, "Hello")
+        self.assertEqual(mock_message.reply_text.call_count, 1)
+        mock_sleep.assert_not_called()
 
     @patch("bot.LOGGER")
     async def test_log_error_formatting(self, mock_logger: MagicMock) -> None:
