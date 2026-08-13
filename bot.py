@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatMemberStatus, ChatType, ParseMode
-from telegram.error import Forbidden, NetworkError, TelegramError, TimedOut
+from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -490,11 +490,69 @@ async def reply_with_connect_retry(message: object, text: str, **kwargs: object)
             await asyncio.sleep(delay)
 
 
+async def send_op_invite_dm(
+    message: Message, context: ContextTypes.DEFAULT_TYPE, code: str
+) -> None:
+    """Handle the `join_<CODE>` deep-link payload: create a single-use invite
+    link to that OP's group and send it here, in private chat with the bot.
+    This is the only place invite links are ever generated now — they never
+    get posted into the (crowded) main/OP group chats."""
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
+    op = op_registry.get(code)
+    if op is None or op.group_id is None:
+        await reply_with_connect_retry(
+            message,
+            "⚠️ Не удалось найти группу для этой ОП. Обратитесь к администратору.",
+        )
+        return
+
+    user = message.from_user
+    try:
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=op.group_id,
+            member_limit=1,
+            name=f"onboard-{user.id if user else 'unknown'}",
+        )
+    except TelegramError as error:
+        LOGGER.warning(
+            "Не удалось создать ссылку-приглашение для ОП %s (group_id=%s): %s",
+            op.code,
+            op.group_id,
+            error,
+        )
+        await reply_with_connect_retry(
+            message,
+            "⚠️ Не удалось автоматически создать ссылку для вступления "
+            "(возможно, бот потерял права администратора в группе этой ОП). "
+            f"Обратитесь к администратору: {format_admin_tag(op.admin)}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await reply_with_connect_retry(
+        message,
+        f"🔗 Вот ваша персональная одноразовая ссылка для вступления в группу "
+        f"<b>{html.escape(op.code)} ({html.escape(op.name)})</b>:\n{invite.invite_link}\n\n"
+        "Ссылка одноразовая и предназначена только для вас — не пересылайте её.",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     user = update.effective_user
     if not message or not user:
         return
+
+    # Deep link from the group's "Вступить в группу" button: /start join_SE
+    if message.chat.type == ChatType.PRIVATE and context.args:
+        payload = context.args[0]
+        if payload.startswith("join_"):
+            code = payload[len("join_") :].upper()
+            await send_op_invite_dm(message, context, code)
+            return
+
     registry: AdminRegistry = context.application.bot_data["admins"]
     if message.chat.type == ChatType.PRIVATE and not registry.contains(user.id):
         await reply_with_connect_retry(
@@ -591,45 +649,54 @@ CS_CODE_PATTERN = re.compile(r"^\s*(cs|кс)\s*$", re.IGNORECASE)
 
 AMBIGUOUS_CS_QUESTION = (
     "Вы о <b>Computer Science (IT)</b> или <b>Cybersecurity (CS)</b>?\n\n"
-    "Ответьте, выбрав один из вариантов.\n\n"
-    "💡 Ответь на это сообщение (Reply), чтобы узнать своего ответственного админа!"
+    "Ответьте, выбрав один из вариантов."
 )
+
+
+def build_join_keyboard(bot_username: str, code: str) -> InlineKeyboardMarkup | None:
+    """Button that deep-links into a private chat with the bot, where the
+    single-use invite link will be delivered. We never post the invite link
+    straight into the crowded main group — Telegram bots can't silently add
+    a user to a group by username (there is no such Bot API method), and
+    posting a public link in a group full of people is exactly what we're
+    trying to avoid."""
+    if not bot_username:
+        return None
+    url = f"https://t.me/{bot_username}?start=join_{code}"
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"🔗 Вступить в группу {code}", url=url)]]
+    )
 
 
 async def build_invite_section(
     context: ContextTypes.DEFAULT_TYPE, op: OPProgram, user_id: int
-) -> str:
-    """Create a single-use invite link for the OP's group (if linked) and
-    return an HTML snippet to append to the reply. Falls back to an
-    explanatory note if the group isn't linked yet or the bot lacks rights."""
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Return (text_note, keyboard) for inviting the user into the OP group.
+
+    We deliberately do NOT create/post the invite link here anymore: it used
+    to be posted right into the main group chat, visible to everyone. Now we
+    only attach a button that sends the student into a private chat with the
+    bot; the actual single-use link is generated and sent there (see
+    `start()` handling the `join_<CODE>` deep-link payload)."""
     if op.group_id is None:
         return (
             "\n\n⚠️ Группа для этой ОП ещё не привязана к боту "
-            "(администратор ОП может выполнить /setopgroup внутри своей группы)."
+            "(администратор ОП может выполнить /setopgroup внутри своей группы).",
+            None,
         )
 
-    try:
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=op.group_id,
-            member_limit=1,
-            name=f"onboard-{user_id}",
-        )
-    except TelegramError as error:
-        LOGGER.warning(
-            "Не удалось создать ссылку-приглашение для ОП %s (group_id=%s): %s",
-            op.code,
-            op.group_id,
-            error,
-        )
+    bot_username = context.bot.username or ""
+    keyboard = build_join_keyboard(bot_username, op.code)
+    if keyboard is None:
         return (
-            "\n\n⚠️ Не удалось автоматически создать ссылку для вступления "
-            "(возможно, бот не админ в группе этой ОП). Обратитесь к "
-            "администратору выше."
+            "\n\n⚠️ Не удалось сформировать ссылку для перехода в личные "
+            "сообщения. Обратитесь к администратору выше.",
+            None,
         )
-
     return (
-        f"\n\n🔗 Вступить в группу {html.escape(op.code)}: "
-        f'<a href="{invite.invite_link}">одноразовая ссылка-приглашение</a>'
+        "\n\n👉 Нажмите кнопку ниже — я пришлю одноразовую ссылку для "
+        "вступления в группу в личные сообщения.",
+        keyboard,
     )
 
 
@@ -717,13 +784,15 @@ async def handle_op_message(
         tracker.clear_pending_clarification(chat_id, user_id)
         tracker.remove_user(chat_id, user_id)
         reply_text = build_op_response(user_mention, op)
-        reply_text += await build_invite_section(context, op, user_id)
+        note, keyboard = await build_invite_section(context, op, user_id)
+        reply_text += note
         await reply_with_connect_retry(
             message,
             reply_text,
             parse_mode=ParseMode.HTML,
             reply_to_message_id=message.message_id,
             disable_web_page_preview=True,
+            reply_markup=keyboard,
         )
         return
 
@@ -757,20 +826,27 @@ async def handle_op_message(
 
     tracker.remove_user(chat_id, user_id)
 
+    keyboard: InlineKeyboardMarkup | None = None
     if len(matched_ops) == 1:
         op = matched_ops[0]
         reply_text = build_op_response(user_mention, op)
-        reply_text += await build_invite_section(context, op, user_id)
+        note, keyboard = await build_invite_section(context, op, user_id)
+        reply_text += note
     else:
         items = []
+        buttons = []
         for op in matched_ops:
             admin_tag = format_admin_tag(op.admin)
-            invite_snippet = await build_invite_section(context, op, user_id)
+            note, op_keyboard = await build_invite_section(context, op, user_id)
             items.append(
                 f"• <b>{html.escape(op.code)}</b> ({html.escape(op.name)})\n"
                 f"  🏫 <i>{html.escape(op.school)}</i> — {admin_tag}"
-                f"{invite_snippet}"
+                f"{note}"
             )
+            if op_keyboard:
+                buttons.extend(op_keyboard.inline_keyboard)
+        if buttons:
+            keyboard = InlineKeyboardMarkup(buttons)
         formatted_items = "\n\n".join(items)
         reply_text = (
             f"Привет, {user_mention}! 👋\n\n"
@@ -783,6 +859,7 @@ async def handle_op_message(
         parse_mode=ParseMode.HTML,
         reply_to_message_id=message.message_id,
         disable_web_page_preview=True,
+        reply_markup=keyboard,
     )
 
 
@@ -954,13 +1031,13 @@ async def set_op_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         LOGGER.warning("Не удалось проверить права бота в чате %s: %s", chat.id, error)
 
     op_registry: OPRegistry = context.application.bot_data["op_registry"]
-    op = op_registry.get(code)
-    if op is not None and op_registry.set_group_id(code, chat.id):
+    if op_registry.set_group_id(code, chat.id):
         await reply_with_connect_retry(
             message,
-            f"✅ Эта группа закреплена как группа ОП <b>{html.escape(code)}</b> "
-            f"({html.escape(op.name)}). Теперь студентам, которые назвали эту ОП, "
-            "будет автоматически выдаваться одноразовая ссылка для вступления сюда.",
+            f"🔒 Эта группа «{html.escape(chat.title or str(chat.id))}» закреплена "
+            f"как группа ОП <b>{html.escape(code)}</b>. Теперь студентам, "
+            "указавшим эту ОП, будут автоматически выдаваться персональные "
+            "одноразовые ссылки для вступления в личные сообщения.",
             parse_mode=ParseMode.HTML,
         )
     else:
@@ -984,10 +1061,11 @@ async def welcome_new_members(
     op_registry: OPRegistry = context.application.bot_data["op_registry"]
     bot_id = context.bot.id
 
-    # If this chat is itself a specific OP's own group (linked via
-    # /setopgroup), joining it already tells us the member's OP — no need
-    # to ask them again, unlike the general first-year onboarding chat.
-    own_op = op_registry.find_by_group_id(message.chat.id)
+    # If this chat is itself a registered OP group (linked via /setopgroup),
+    # people land here *after* they've already told the bot their OP in the
+    # main first-year group and clicked the invite button. Don't ask them
+    # again — just a plain welcome, no OP question, nothing tracked.
+    linked_op = op_registry.find_by_group_id(message.chat.id)
 
     for member in message.new_chat_members:
         if member.id == bot_id:
@@ -999,18 +1077,16 @@ async def welcome_new_members(
             )
             continue
 
-        text = build_welcome_text(chain, member.mention_html(), settings.max_words)
-        if own_op is not None:
-            text += (
-                f"\n\nВы в группе <b>{html.escape(own_op.code)}</b> "
-                f"({html.escape(own_op.name)}) — всё уже настроено, отвечать не нужно 🙂"
+        if linked_op is not None:
+            await reply_with_connect_retry(
+                message,
+                f"Добро пожаловать в группу <b>{html.escape(linked_op.code)}</b>, "
+                f"{member.mention_html()}! 👋",
+                parse_mode=ParseMode.HTML,
             )
-            await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
-            # Deliberately do NOT call tracker.add_welcome_message/add_user
-            # here — that's what puts a member "awaiting OP answer", and
-            # this chat already implies their OP, so we skip asking.
             continue
 
+        text = build_welcome_text(chain, member.mention_html(), settings.max_words)
         sent_msg = await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
         if sent_msg and hasattr(sent_msg, "message_id"):
             tracker.add_welcome_message(message.chat.id, sent_msg.message_id, member.id)
@@ -1060,7 +1136,6 @@ def create_application(settings: Settings) -> Application:
             "op_registry": op_registry,
             "welcome_tracker": welcome_tracker,
             "settings": settings,
-            "pending_invites": {},
         }
     )
     application.add_handler(CommandHandler("start", start))
