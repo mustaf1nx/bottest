@@ -1,0 +1,264 @@
+{
+  "SE": {
+    "name": "Software Engineering",
+    "school": "School of Software Engineering",
+    "admin": "@Alsh444 и @Anuarick",
+    "aliases": [
+      "SE",
+      "СЕ",
+      "Software Engineering",
+      "сешник",
+      "сешники",
+      "сешница",
+      "софтвер",
+      "софтверщик",
+      "софтварщик",
+      "софтваре",
+      "софтвар",
+      "софтвер инжиниринг",
+      "софтвар инжиниринг"
+    ]
+  },
+  "IT": {
+    "name": "Computer Science",
+    "school": "School of Artificial Intelligence and Data Science",
+    "admin": "@TypicallyRain",
+    "aliases": [
+      "IT",
+      "ИТ",
+      "Computer Science",
+      "айти",
+      "айтишник",
+      "айтишники",
+      "компьютер сайнс",
+      "комп сайнс",
+      "комп сай",
+      "комп саи",
+      "компьютерные науки",
+      "кс"
+    ]
+  },
+  "BDA": {
+    "name": "Big Data Analysis",
+    "school": "School of Artificial Intelligence and Data Science",
+    "admin": "@therealarujxx",
+    "aliases": [
+      "BDA",
+      "БДА",
+      "Big Data Analysis",
+      "Big Data",
+      "бдашник",
+      "бдашники",
+      "бигдата",
+      "биг дата",
+      "дата анализис",
+      "биг дата анализис"
+    ]
+  },
+  "MCS": {
+    "name": "Mathematical and Computational Science",
+    "school": "School of Artificial Intelligence and Data Science",
+    "admin": "@howflowersbloom",
+    "aliases": [
+      "MCS",
+      "МКС",
+      "Mathematical and Computational Science",
+      "мксник",
+      "мксники",
+      "маткомп",
+      "математикал"
+    ]
+  },
+  "CS": {
+    "name": "Cybersecurity",
+    "school": "School of Cybersecurity",
+    "admin": "@alishaisyapping и @Zeekmek",
+    "aliases": [
+      "CS",
+      "КС",
+      "Cybersecurity",
+      "Cyber Security",
+      "кибербез",
+      "кибербезопасность",
+      "киберсекьюрити",
+      "кибер секьюрити",
+      "сайберсекьюрити",
+      "сайбер",
+      "кибер"
+    ]
+  },
+  "SST": {
+    "name": "Smart Security Technologies",
+    "school": "School of Cybersecurity",
+    "admin": "@alishaisyapping и @Zeekmek",
+    "aliases": [
+      "SST",
+      "ССТ",
+      "Smart Security Technologies",
+      "сстшник",
+      "смарт секьюрити",
+      "смартсекьюрити",
+      "смарт секьюрити технолоджис"
+    ]
+  },
+  "IIOT": {
+    "name": "Industrial Internet of Things",
+    "school": "School of Intelligent Systems",
+    "admin": "@dhshrbrhr",
+    "aliases": [
+      "IIOT",
+      "ИИОТ",
+      "Industrial Internet of Things",
+      "ииотник",
+      "индастриал иот",
+      "индустриал иот",
+      "иот"
+    ]
+  },
+  "EE": {
+    "name": "Electronic Engineering",
+    "school": "School of Intelligent Systems",
+    "admin": "@dhshrbrhr",
+    "aliases": [
+      "EE",
+      "ЕЕ",
+      "ЭЭ",
+      "Electronic Engineering",
+      "электронщик",
+      "электроник инжиниринг",
+      "електроник инжиниринг",
+      "электроника"
+    ]
+  },
+  "ST": {
+    "name": "Smart Technologies",
+    "school": "School of Intelligent Systems",
+    "admin": "@dhshrbrhr",
+    "aliases": [
+      "ST",
+      "СТ",
+      "Smart Technologies",
+      "стшник",
+      "смарт тех",
+      "смарт технолоджис"
+    ]
+  },
+  "DNE": {
+    "name": "Digital technologies in nuclear power engineering",
+    "school": "School of Intelligent Systems",
+    "admin": "@dhshrbrhr",
+    "aliases": [
+      "DNE",
+      "DTNPE",
+      "ДНЕ",
+      "ДТНПЕ",
+      "Digital technologies in nuclear power engineering",
+      "днешник",
+      "нуклеар",
+      "ядерка",
+      "ядерная инженерия"
+    ]
+  },
+  "ITM": {
+    "name": "IT Management",
+    "school": "School of Creative Industries",
+    "admin": "@assiixq",
+    "aliases": [
+      "ITM",
+      "ИТМ",
+      "IT Management",
+      "итмщик",
+      "айти менеджмент",
+      "ит менеджмент"
+    ]
+  },
+  "ITE": {
+    "name": "IT Entrepreneurship",
+    "school": "School of Creative Industries",
+    "admin": "@assiixq",
+    "aliases": [
+      "ITE",
+      "ИТЕ",
+      "IT Entrepreneurship",
+      "итешник",
+      "айти предпринимательство",
+      "ит предпринимательство",
+      "айти энтрепренершип"
+    ]
+  },
+  "AIB": {
+    "name": "AI Business",
+    "school": "School of Creative Industries",
+    "admin": "@assiixq",
+    "aliases": [
+      "AIB",
+      "АИБ",
+      "AI Business",
+      "аибник",
+      "ииб",
+      "аи бизнес",
+      "ай бизнес",
+      "ии бизнес"
+    ]
+  },
+  "MT": {
+    "name": "Media Technologies",
+    "school": "School of Creative Industries",
+    "admin": "@Subbzerr01",
+    "aliases": [
+      "MT",
+      "МТ",
+      "Media Technologies",
+      "мтшник",
+      "медиа тех",
+      "медия тех",
+      "медиа технологии",
+      "медия технологии",
+      "медиятехнологии",
+      "медиатехнологии"
+    ]
+  },
+  "DJ": {
+    "name": "Digital Journalism",
+    "school": "School of Creative Industries",
+    "admin": "@vveetaaa",
+    "aliases": [
+      "DJ",
+      "ДЖ",
+      "Digital Journalism",
+      "джник",
+      "журналистика",
+      "диджитал журналистика",
+      "цифровая журналистика",
+      "диджей"
+    ]
+  },
+  "DPA": {
+    "name": "Digital Public Administration",
+    "school": "School of Digital Public Administration",
+    "admin": "@assiixq",
+    "aliases": [
+      "DPA",
+      "ДПА",
+      "Digital Public Administration",
+      "дпашник",
+      "диджитал паблик",
+      "госуправление"
+    ]
+  },
+  "DL": {
+    "name": "Digital Jurisprudence",
+    "school": "School of Digital Public Administration",
+    "admin": "@finrandiri",
+    "aliases": [
+      "DL",
+      "ДЛ",
+      "Digital Jurisprudence",
+      "длшник",
+      "юриспруденция",
+      "диджитал юриспруденция",
+      "цифровая юриспруденция",
+      "цифровые юристы"
+    ]
+  }
+}
