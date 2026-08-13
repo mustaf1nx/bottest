@@ -11,6 +11,7 @@ services:
       GREETINGS_FILE: /app/greetings.txt
       ADMINS_FILE: /data/admins.json
       OP_ADMINS_FILE: /data/op_admins.json
+      INVITES_FILE: /data/invites.json
     volumes:
       - bot-admins:/data
     read_only: true

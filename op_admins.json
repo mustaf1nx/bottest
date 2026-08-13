@@ -17,7 +17,9 @@
       "софтвар",
       "софтвер инжиниринг",
       "софтвар инжиниринг"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "IT": {
     "name": "Computer Science",
@@ -36,7 +38,9 @@
       "комп саи",
       "компьютерные науки",
       "кс"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "BDA": {
     "name": "Big Data Analysis",
@@ -53,7 +57,9 @@
       "биг дата",
       "дата анализис",
       "биг дата анализис"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "MCS": {
     "name": "Mathematical and Computational Science",
@@ -67,7 +73,9 @@
       "мксники",
       "маткомп",
       "математикал"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "CS": {
     "name": "Cybersecurity",
@@ -85,7 +93,9 @@
       "сайберсекьюрити",
       "сайбер",
       "кибер"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "SST": {
     "name": "Smart Security Technologies",
@@ -99,7 +109,9 @@
       "смарт секьюрити",
       "смартсекьюрити",
       "смарт секьюрити технолоджис"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "IIOT": {
     "name": "Industrial Internet of Things",
@@ -113,7 +125,9 @@
       "индастриал иот",
       "индустриал иот",
       "иот"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "EE": {
     "name": "Electronic Engineering",
@@ -128,7 +142,9 @@
       "электроник инжиниринг",
       "електроник инжиниринг",
       "электроника"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "ST": {
     "name": "Smart Technologies",
@@ -141,7 +157,9 @@
       "стшник",
       "смарт тех",
       "смарт технолоджис"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "DNE": {
     "name": "Digital technologies in nuclear power engineering",
@@ -157,7 +175,9 @@
       "нуклеар",
       "ядерка",
       "ядерная инженерия"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "ITM": {
     "name": "IT Management",
@@ -170,7 +190,9 @@
       "итмщик",
       "айти менеджмент",
       "ит менеджмент"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "ITE": {
     "name": "IT Entrepreneurship",
@@ -184,7 +206,9 @@
       "айти предпринимательство",
       "ит предпринимательство",
       "айти энтрепренершип"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "AIB": {
     "name": "AI Business",
@@ -199,7 +223,9 @@
       "аи бизнес",
       "ай бизнес",
       "ии бизнес"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "MT": {
     "name": "Media Technologies",
@@ -216,7 +242,9 @@
       "медия технологии",
       "медиятехнологии",
       "медиатехнологии"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "DJ": {
     "name": "Digital Journalism",
@@ -231,7 +259,9 @@
       "диджитал журналистика",
       "цифровая журналистика",
       "диджей"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "DPA": {
     "name": "Digital Public Administration",
@@ -244,7 +274,9 @@
       "дпашник",
       "диджитал паблик",
       "госуправление"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   },
   "DL": {
     "name": "Digital Jurisprudence",
@@ -259,6 +291,8 @@
       "диджитал юриспруденция",
       "цифровая юриспруденция",
       "цифровые юристы"
-    ]
+    ],
+    "chat_id": null,
+    "chat_title": ""
   }
 }
