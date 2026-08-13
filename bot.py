@@ -473,6 +473,17 @@ def build_welcome_text(chain: MarkovChain, mention: str, max_words: int) -> str:
     )
 
 
+def build_op_chat_welcome_text(mention: str, op: "OPProgram") -> str:
+    """Приветствие для чата, который уже привязан к конкретной ОП — тут не
+    нужно ни спрашивать код ОП, ни объяснять механику Reply: люди сюда
+    попадают уже зная, в какой они ОП."""
+    return (
+        f"Привет, {mention}! 👋 Это чат ОП <b>{html.escape(op.code)}</b> "
+        f"({html.escape(op.name)}).\n\n"
+        "Пожалуйста, ознакомься с правилами в описании группы, а также с гайдом."
+    )
+
+
 def is_connection_error(error: BaseException | None) -> bool:
     """Return True if the exception chain contains network or connection errors."""
     current: BaseException | None = error
@@ -1270,7 +1281,10 @@ async def welcome_new_members(
     chain: MarkovChain = context.application.bot_data["greeting_chain"]
     settings: Settings = context.application.bot_data["settings"]
     tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
     bot_id = context.bot.id
+
+    op = op_registry.find_by_chat_id(message.chat.id)
 
     for member in message.new_chat_members:
         if member.id == bot_id:
@@ -1280,6 +1294,12 @@ async def welcome_new_members(
                 "Администратор может выполнить /allowpm, чтобы открыть личные "
                 "команды /start и /preview.",
             )
+            continue
+        if op is not None:
+            # Это чат конкретной ОП — не спрашиваем код ОП и не ждём Reply,
+            # это только для общего чата первого курса.
+            text = build_op_chat_welcome_text(member.mention_html(), op)
+            await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
             continue
         text = build_welcome_text(chain, member.mention_html(), settings.max_words)
         sent_msg = await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
