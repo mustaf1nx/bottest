@@ -202,25 +202,38 @@ class InviteManager:
         invite.source_message_id = message_id
         self._save()
 
+    def set_source_chat(self, invite: PendingInvite, chat_id: int) -> None:
+        """Запомнить, из какого чата (общего чата первого курса) пришёл
+        запрос на эту ссылку — даже если карточка/сообщение со ссылкой
+        никогда не понадобится (например, личка сработала с первой попытки).
+        Это даёт вызывающему коду chat_id, нужный для последующей очистки
+        всей переписки по онбордингу в этом чате."""
+        if invite.source_chat_id is None:
+            invite.source_chat_id = chat_id
+            self._save()
+
     # ------------------------------------------------------------------ #
     # Заявки на вступление
     # ------------------------------------------------------------------ #
     async def handle_join_request(
         self, bot: Bot, chat_id: int, user_id: int, invite_link: str | None
-    ) -> str:
+    ) -> tuple[str, PendingInvite | None]:
         """Решить судьбу заявки.
 
-        Возвращает: ``approved``, ``declined`` или ``ignored``.
+        Возвращает ``(outcome, invite)``, где outcome — ``approved``,
+        ``declined`` или ``ignored``. ``invite`` — снимок записи (даже уже
+        отозванной) для approved/declined, чтобы вызывающий код мог, например,
+        подчистить остальную переписку по онбордингу в чате-источнике.
         ``ignored`` — ссылка создана не ботом (например, вручную админом),
         такие заявки бот не трогает и оставляет людям.
         """
         if not invite_link:
-            return "ignored"
+            return "ignored", None
 
         async with self._lock:
             invite = self._pending.get(invite_link)
             if invite is None or invite.target_chat_id != chat_id:
-                return "ignored"
+                return "ignored", None
 
             if invite.user_id != user_id or invite.is_expired:
                 reason = "истёкшая" if invite.is_expired else "чужая"
@@ -237,17 +250,17 @@ class InviteManager:
                     LOGGER.warning("Не удалось отклонить заявку: %s", error)
                 # Ссылка скомпрометирована — сжигаем её целиком.
                 await self._retire(bot, invite)
-                return "declined"
+                return "declined", invite
 
             try:
                 await bot.approve_chat_join_request(chat_id, user_id)
             except TelegramError as error:
                 LOGGER.warning("Не удалось одобрить заявку: %s", error)
-                return "ignored"
+                return "ignored", None
 
             await self._retire(bot, invite)
             LOGGER.info("Пользователь %s принят в чат %s", user_id, chat_id)
-            return "approved"
+            return "approved", invite
 
     # ------------------------------------------------------------------ #
     # Уборка

@@ -283,6 +283,15 @@ class WelcomeTracker:
         self._active_new_members: dict[tuple[int, int], int] = {}
         self._welcome_messages: dict[tuple[int, int], int] = {}
         self._pending_clarification: set[tuple[int, int]] = set()
+        # Members who already got a working "join" button/invite. Further
+        # replies from them (e.g. "SE", then "MT", then "IT" to the same
+        # welcome message) are ignored — one person joins exactly one OP.
+        self._answered: set[tuple[int, int]] = set()
+        # Every message (bot's questions/cards + the member's own replies)
+        # that belongs to this member's onboarding Q&A in this chat, so it
+        # can all be deleted in one go once they actually join the OP chat —
+        # otherwise the exchange just sits there and floods the main chat.
+        self._thread_messages: dict[tuple[int, int], list[int]] = {}
 
     def add_welcome_message(
         self, chat_id: int, welcome_message_id: int, target_user_id: int
@@ -291,6 +300,7 @@ class WelcomeTracker:
         message from this exact member will be treated as that member's answer."""
         self._welcome_messages[(chat_id, welcome_message_id)] = target_user_id
         self._active_new_members[(chat_id, target_user_id)] = self.max_messages
+        self.track_thread_message(chat_id, target_user_id, welcome_message_id)
 
     def add_user(self, chat_id: int, user_id: int) -> None:
         self._active_new_members[(chat_id, user_id)] = self.max_messages
@@ -315,6 +325,18 @@ class WelcomeTracker:
             return False
 
         return user_id == welcome_target
+
+    def has_answered(self, chat_id: int, user_id: int) -> bool:
+        return (chat_id, user_id) in self._answered
+
+    def mark_answered(self, chat_id: int, user_id: int) -> None:
+        self._answered.add((chat_id, user_id))
+
+    def track_thread_message(self, chat_id: int, user_id: int, message_id: int) -> None:
+        self._thread_messages.setdefault((chat_id, user_id), []).append(message_id)
+
+    def pop_thread_messages(self, chat_id: int, user_id: int) -> list[int]:
+        return self._thread_messages.pop((chat_id, user_id), [])
 
     def record_message(self, chat_id: int, user_id: int) -> None:
         key = (chat_id, user_id)
@@ -801,6 +823,29 @@ def build_join_keyboard(op: OPProgram, user_id: int) -> InlineKeyboardMarkup | N
     )
 
 
+async def cleanup_onboarding_thread(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int | None, user_id: int
+) -> None:
+    """Удалить всю переписку по онбордингу конкретного участника в общем
+    чате первого курса (вопрос бота, все его ответы, карточки с кнопками) —
+    вызывается, когда человек уже реально попал в чат своей ОП, чтобы чат не
+    флудился и не переполнялся старыми обменами."""
+    if chat_id is None:
+        return
+    tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
+    message_ids = tracker.pop_thread_messages(chat_id, user_id)
+    for message_id in message_ids:
+        try:
+            await context.bot.delete_message(chat_id, message_id)
+        except TelegramError as error:
+            LOGGER.debug(
+                "Не удалось удалить сообщение %s в чате %s: %s",
+                message_id,
+                chat_id,
+                error,
+            )
+
+
 async def is_chat_member(bot: object, chat_id: int, user_id: int) -> bool:
     try:
         membership = await bot.get_chat_member(chat_id, user_id)  # type: ignore[attr-defined]
@@ -997,6 +1042,10 @@ async def handle_join_button(
         else:
             if result.ok:
                 await query.answer(f"Готово, вы добавлены в чат {op.code} ✅", show_alert=True)
+                # Добавили напрямую через userbot — заявки на вступление не
+                # было и handle_chat_join_request не сработает, поэтому
+                # подчищаем переписку по онбордингу прямо здесь.
+                await cleanup_onboarding_thread(context, source_chat_id, target_id)
                 return
             LOGGER.info(
                 "Добавление @%s не удалось (%s), переходим к ссылке",
@@ -1010,6 +1059,9 @@ async def handle_join_button(
     except InviteError as error:
         await query.answer(str(error), show_alert=True)
         return
+
+    if source_chat_id is not None:
+        manager.set_source_chat(issued.invite, source_chat_id)
 
     if issued.reused:
         minutes = max(1, issued.invite.seconds_left // 60)
@@ -1052,7 +1104,7 @@ async def handle_chat_join_request(
 
     manager: InviteManager = context.application.bot_data["invites"]
     invite_link = request.invite_link.invite_link if request.invite_link else None
-    outcome = await manager.handle_join_request(
+    outcome, invite = await manager.handle_join_request(
         context.bot, request.chat.id, request.from_user.id, invite_link
     )
 
@@ -1067,6 +1119,13 @@ async def handle_chat_join_request(
             )
         except TelegramError:
             pass
+        # Человек реально вступил — чистим всю Q&A-переписку в общем чате
+        # первого курса, чтобы она там не копилась и не мешала обычному
+        # общению.
+        if invite is not None:
+            await cleanup_onboarding_thread(
+                context, invite.source_chat_id, invite.user_id
+            )
 
 
 async def ask_cs_clarification(
@@ -1125,6 +1184,14 @@ async def handle_op_message(
     if not tracker.is_target_member(chat_id, user_id, reply_to_id):
         return
 
+    if tracker.has_answered(chat_id, user_id):
+        # Уже выдали рабочую кнопку/ссылку раньше — один человек вступает
+        # только в одну ОП, дальнейшие ответы ("SE", потом "MT", потом "IT"...)
+        # на это же приветственное сообщение больше не обрабатываются.
+        return
+
+    tracker.track_thread_message(chat_id, user_id, message.message_id)
+
     if QUESTION_PATTERN.search(message.text):
         return
 
@@ -1142,13 +1209,16 @@ async def handle_op_message(
             return
         tracker.clear_pending_clarification(chat_id, user_id)
         tracker.remove_user(chat_id, user_id)
-        await reply_with_connect_retry(
+        tracker.mark_answered(chat_id, user_id)
+        sent_msg = await reply_with_connect_retry(
             message,
             build_op_response(user_mention, op),
             parse_mode=ParseMode.HTML,
             reply_to_message_id=message.message_id,
             reply_markup=build_join_keyboard(op, user_id),
         )
+        if sent_msg and hasattr(sent_msg, "message_id"):
+            tracker.track_thread_message(chat_id, user_id, sent_msg.message_id)
         return
 
     if CS_CODE_PATTERN.search(message.text):
@@ -1180,6 +1250,7 @@ async def handle_op_message(
         return
 
     tracker.remove_user(chat_id, user_id)
+    tracker.mark_answered(chat_id, user_id)
 
     keyboard = None
     if len(matched_ops) == 1:
@@ -1203,8 +1274,8 @@ async def handle_op_message(
         reply_text = (
             f"Привет, {user_mention}! 👋\n\n"
             f"📍 <b>Найдены направления (ОП):</b>\n\n{formatted_items}\n\n"
-            "Если это не то, что вы имели в виду — ответьте (Reply) на это "
-            "сообщение точным кодом вашей ОП."
+            "Выберите вариант кнопкой выше — один человек может вступить "
+            "только в одну ОП."
         )
 
     sent_msg = await reply_with_connect_retry(
@@ -1214,11 +1285,8 @@ async def handle_op_message(
         reply_to_message_id=message.message_id,
         reply_markup=keyboard,
     )
-    if len(matched_ops) > 1 and sent_msg and hasattr(sent_msg, "message_id"):
-        # Анкорим карточку со списком вариантов на этого же участника —
-        # чтобы Reply с уточнённым кодом ОП, предложенный в тексте выше,
-        # действительно обрабатывался, а не молча игнорировался.
-        tracker.add_welcome_message(chat_id, sent_msg.message_id, user_id)
+    if sent_msg and hasattr(sent_msg, "message_id"):
+        tracker.track_thread_message(chat_id, user_id, sent_msg.message_id)
 
 
 async def show_ops(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
