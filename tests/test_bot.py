@@ -481,6 +481,116 @@ class DeepLinkSecurityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(issued.invite.invite_link, kwargs["text"])
 
 
+class RepeatedAnswerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_second_reply_to_same_welcome_message_is_ignored(self) -> None:
+        """Regression test: once a member has been given a working join
+        button, further replies to the same welcome message with a
+        different OP code ("SE", then "MT"...) must be ignored — one person
+        joins exactly one OP."""
+        from bot import WelcomeTracker
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(path)
+            registry.set_chat("SE", -1001111111111, "SE chat")
+            registry.set_chat("MT", -1002222222222, "MT chat")
+            tracker = WelcomeTracker(max_messages=5)
+
+            chat_id = 100
+            welcome_msg_id = 555
+            user_id = 123
+            tracker.add_welcome_message(chat_id, welcome_msg_id, user_id)
+
+            context = MagicMock()
+            context.application.bot_data = {
+                "op_registry": registry,
+                "welcome_tracker": tracker,
+            }
+
+            def make_update(text: str, message_id: int) -> MagicMock:
+                update = MagicMock()
+                update.effective_message.chat.id = chat_id
+                update.effective_message.from_user.id = user_id
+                update.effective_message.from_user.is_bot = False
+                update.effective_message.from_user.mention_html.return_value = "@student"
+                update.effective_message.reply_to_message.message_id = welcome_msg_id
+                update.effective_message.text = text
+                update.effective_message.message_id = message_id
+                update.effective_message.reply_text = AsyncMock()
+                return update
+
+            first = make_update("SE", 1001)
+            await handle_op_message(first, context)
+            first.effective_message.reply_text.assert_called_once()
+
+            second = make_update("MT", 1002)
+            await handle_op_message(second, context)
+            second.effective_message.reply_text.assert_not_called()
+
+            self.assertTrue(tracker.has_answered(chat_id, user_id))
+
+
+class OnboardingCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_join_approval_cleans_up_thread_messages(self) -> None:
+        """Once the member actually joins their OP chat, the whole Q&A
+        exchange in the crowded main chat (bot's question, their replies,
+        the join-button card) must be deleted so it doesn't pile up."""
+        from bot import WelcomeTracker, handle_chat_join_request
+        from invites import InviteManager
+
+        with tempfile.TemporaryDirectory() as directory:
+            op_path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(op_path)
+            registry.set_chat("SE", -1001111111111, "SE chat")
+
+            invites_path = Path(directory) / "invites.json"
+            manager = InviteManager(invites_path)
+            fake_bot_for_issue = AsyncMock(
+                create_chat_invite_link=AsyncMock(
+                    return_value=MagicMock(invite_link="https://t.me/joinchat/xyz")
+                )
+            )
+            issued = await manager.issue(
+                bot=fake_bot_for_issue,
+                op_code="SE",
+                target_chat_id=-1001111111111,
+                user_id=42,
+            )
+            manager.set_source_chat(issued.invite, 100)
+
+            tracker = WelcomeTracker(max_messages=5)
+            tracker.track_thread_message(100, 42, 501)
+            tracker.track_thread_message(100, 42, 502)
+            tracker.track_thread_message(100, 42, 503)
+
+            context = MagicMock()
+            context.bot.approve_chat_join_request = AsyncMock()
+            context.bot.revoke_chat_invite_link = AsyncMock()
+            context.bot.delete_message = AsyncMock()
+            context.bot.send_message = AsyncMock()
+            context.application.bot_data = {
+                "invites": manager,
+                "op_registry": registry,
+                "welcome_tracker": tracker,
+            }
+
+            update = MagicMock()
+            update.chat_join_request.chat.id = -1001111111111
+            update.chat_join_request.from_user.id = 42
+            update.chat_join_request.invite_link.invite_link = issued.invite.invite_link
+
+            await handle_chat_join_request(update, context)
+
+            deleted_ids = {
+                call.args[1] for call in context.bot.delete_message.call_args_list
+            }
+            self.assertEqual(deleted_ids, {501, 502, 503})
+            for call in context.bot.delete_message.call_args_list:
+                self.assertEqual(call.args[0], 100)
+            # Тред уже подчищен — повторный запрос ничего не находит.
+            self.assertEqual(tracker.pop_thread_messages(100, 42), [])
+
+
 class NetworkErrorHandlingTests(unittest.IsolatedAsyncioTestCase):
     def test_is_connection_error_detection(self) -> None:
         class DummyConnectError(Exception):
