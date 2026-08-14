@@ -491,7 +491,6 @@ def build_welcome_text(chain: MarkovChain, mention: str, max_words: int) -> str:
     return (
         f"{generated}\n\n"
         f"Рады видеть тебя, {mention}! 👋\n\n"
-        "Пожалуйста, ознакомься с правилами в описании группы, а также с гайдом.\n\n"
         "💡 <b>Ответь на это сообщение (Reply)</b>, указав свою ОП (например: <code>SE</code>, <code>CS</code>, <code>IT</code>), чтобы узнать своего ответственного админа!"
     )
 
@@ -503,7 +502,7 @@ def build_op_chat_welcome_text(mention: str, op: "OPProgram") -> str:
     return (
         f"Привет, {mention}! 👋 Это чат ОП <b>{html.escape(op.code)}</b> "
         f"({html.escape(op.name)}).\n\n"
-        "Пожалуйста, ознакомься с правилами в описании группы, а также с гайдом."
+        "Пожалуйста, ознакомься с правилами в описании группы, а также с гайдом в закрепленном сообщении."
     )
 
 
