@@ -161,7 +161,7 @@ DEFAULT_OPS: dict[str, dict[str, Any]] = {
     "SE": {
         "name": "Software Engineering",
         "school": "School of Software Engineering",
-        "admin": "@Alsh444",
+        "admin": "@Alsh444 и @p_qwack",
         "aliases": ["SE", "СЕ", "Software Engineering", "сешник", "сешники", "сешница", "софтвер", "софтверщик", "софтварщик", "софтваре", "софтвар", "софтвер инжиниринг", "софтвар инжиниринг"],
     },
     "IT": {
@@ -197,25 +197,25 @@ DEFAULT_OPS: dict[str, dict[str, Any]] = {
     "IIOT": {
         "name": "Industrial Internet of Things",
         "school": "School of Intelligent Systems",
-        "admin": "@dhshrbrhr",
+        "admin": "@dhshrbrhr и @urkerim",
         "aliases": ["IIOT", "ИИОТ", "Industrial Internet of Things", "ииотник", "индастриал иот", "индустриал иот", "иот"],
     },
     "EE": {
         "name": "Electronic Engineering",
         "school": "School of Intelligent Systems",
-        "admin": "@dhshrbrhr",
+        "admin": "@dhshrbrhr и @urkerim",
         "aliases": ["EE", "ЕЕ", "ЭЭ", "Electronic Engineering", "электронщик", "электроник инжиниринг", "електроник инжиниринг", "электроника"],
     },
     "ST": {
         "name": "Smart Technologies",
         "school": "School of Intelligent Systems",
-        "admin": "@dhshrbrhr",
+        "admin": "@dhshrbrhr и @urkerim",
         "aliases": ["ST", "СТ", "Smart Technologies", "стшник", "смарт тех", "смарт технолоджис"],
     },
     "DNE": {
         "name": "Digital technologies in nuclear power engineering",
         "school": "School of Intelligent Systems",
-        "admin": "@dhshrbrhr",
+        "admin": "@dhshrbrhr и @urkerim",
         "aliases": ["DNE", "DTNPE", "ДНЕ", "ДТНПЕ", "Digital technologies in nuclear power engineering", "днешник", "нуклеар", "ядерка", "ядерная инженерия"],
     },
     "ITM": {
