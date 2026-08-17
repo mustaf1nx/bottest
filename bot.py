@@ -220,19 +220,19 @@ DEFAULT_OPS: dict[str, dict[str, Any]] = {
     },
     "ITM": {
         "name": "IT Management",
-        "school": "School of Creative Industries",
+        "school": "School of Digital Public Administration",
         "admin": "@assiixq",
         "aliases": ["ITM", "ИТМ", "IT Management", "итмщик", "айти менеджмент", "ит менеджмент"],
     },
     "ITE": {
         "name": "IT Entrepreneurship",
-        "school": "School of Creative Industries",
+        "school": "School of Digital Public Administration",
         "admin": "@assiixq",
         "aliases": ["ITE", "ИТЕ", "IT Entrepreneurship", "итешник", "айти предпринимательство", "ит предпринимательство", "айти энтрепренершип"],
     },
     "AIB": {
         "name": "AI Business",
-        "school": "School of Creative Industries",
+        "school": "School of Digital Public Administration",
         "admin": "@assiixq",
         "aliases": ["AIB", "АИБ", "AI Business", "аибник", "ииб", "аи бизнес", "ай бизнес", "ии бизнес"],
     },
