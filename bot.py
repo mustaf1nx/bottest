@@ -161,7 +161,7 @@ DEFAULT_OPS: dict[str, dict[str, Any]] = {
     "SE": {
         "name": "Software Engineering",
         "school": "School of Software Engineering",
-        "admin": "@Alsh444 и @p_qwack",
+        "admin": "@Alsh444 и @Anuarick",
         "aliases": ["SE", "СЕ", "Software Engineering", "сешник", "сешники", "сешница", "софтвер", "софтверщик", "софтварщик", "софтваре", "софтвар", "софтвер инжиниринг", "софтвар инжиниринг"],
     },
     "IT": {
