@@ -1,4 +1,4 @@
-{
+  {
   "SE": {
     "name": "Software Engineering",
     "school": "School of Software Engineering",
@@ -9,10 +9,6 @@
       "Software Engineering",
       "сешник",
       "сешники",
-      "программная инженерия",
-      "программную инженерию",
-      "программной инженерии",
-      "прогинж",
       "сешница",
       "софтвер",
       "софтверщик",
@@ -22,8 +18,8 @@
       "софтвер инжиниринг",
       "софтвар инжиниринг"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1003653657331,
+    "chat_title": "AITU | Software Engineering 2026"
   },
   "IT": {
     "name": "Computer Science",
@@ -43,8 +39,8 @@
       "компьютерные науки",
       "кс"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1003976679183,
+    "chat_title": "AITU | Computer Science 2026"
   },
   "BDA": {
     "name": "Big Data Analysis",
@@ -62,8 +58,8 @@
       "дата анализис",
       "биг дата анализис"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004339610998,
+    "chat_title": "AITU | Big Data Analysis 2026"
   },
   "MCS": {
     "name": "Mathematical and Computational Science",
@@ -78,8 +74,8 @@
       "маткомп",
       "математикал"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004490255570,
+    "chat_title": "AITU | Mathematical and Computational Science 2026"
   },
   "CS": {
     "name": "Cybersecurity",
@@ -98,8 +94,8 @@
       "сайбер",
       "кибер"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004483945834,
+    "chat_title": "AITU | Cyber Security 2026"
   },
   "SST": {
     "name": "Smart Security Technologies",
@@ -114,8 +110,8 @@
       "смартсекьюрити",
       "смарт секьюрити технолоджис"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004348482865,
+    "chat_title": "AITU | Smart Security Technologies 2026"
   },
   "IIOT": {
     "name": "Industrial Internet of Things",
@@ -130,8 +126,8 @@
       "индустриал иот",
       "иот"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004368010188,
+    "chat_title": "AITU | Industrial Internet of Things 2026"
   },
   "EE": {
     "name": "Electronic Engineering",
@@ -147,8 +143,8 @@
       "електроник инжиниринг",
       "электроника"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1003903931966,
+    "chat_title": "AITU | Electronic Engineering 2026"
   },
   "ST": {
     "name": "Smart Technologies",
@@ -162,8 +158,8 @@
       "смарт тех",
       "смарт технолоджис"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004434184491,
+    "chat_title": "AITU | Smart Technologies 2026"
   },
   "DNE": {
     "name": "Digital technologies in nuclear power engineering",
@@ -180,8 +176,8 @@
       "ядерка",
       "ядерная инженерия"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004496771501,
+    "chat_title": "AITU | Digital Technologies in Nuclear Power Engineering 2026"
   },
   "ITM": {
     "name": "IT Management",
@@ -195,8 +191,8 @@
       "айти менеджмент",
       "ит менеджмент"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004393906954,
+    "chat_title": "AITU | IT Management 2026"
   },
   "ITE": {
     "name": "IT Entrepreneurship",
@@ -211,8 +207,8 @@
       "ит предпринимательство",
       "айти энтрепренершип"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004457957788,
+    "chat_title": "AITU | IT Entrepreneurship 2026"
   },
   "AIB": {
     "name": "AI Business",
@@ -228,8 +224,8 @@
       "ай бизнес",
       "ии бизнес"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004442379017,
+    "chat_title": "AITU | AI Business 2026"
   },
   "MT": {
     "name": "Media Technologies",
@@ -247,8 +243,8 @@
       "медиятехнологии",
       "медиатехнологии"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004319016182,
+    "chat_title": "AITU | Media Technologies 2026"
   },
   "DJ": {
     "name": "Digital Journalism",
@@ -264,8 +260,8 @@
       "цифровая журналистика",
       "диджей"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004394737248,
+    "chat_title": "AITU | Digital Journalism 2026"
   },
   "DPA": {
     "name": "Digital Public Administration",
@@ -279,8 +275,8 @@
       "диджитал паблик",
       "госуправление"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1003956978109,
+    "chat_title": "AITU | Digital Public Administration 2026"
   },
   "DL": {
     "name": "Digital Jurisprudence",
@@ -296,7 +292,7 @@
       "цифровая юриспруденция",
       "цифровые юристы"
     ],
-    "chat_id": null,
-    "chat_title": ""
+    "chat_id": -1004343850538,
+    "chat_title": "Digital Jurisprudence 2026"
   }
 }
