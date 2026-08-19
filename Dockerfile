@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir --requirement requirements.txt \
 
 COPY --chown=bot:bot *.py greetings.txt op_admins.json ./
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Контейнер стартует от root, чтобы entrypoint.sh мог поправить владельца
 # смонтированного volume (см. entrypoint.sh) — сам процесс бота всё равно
