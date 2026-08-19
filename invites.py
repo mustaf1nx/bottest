@@ -22,12 +22,18 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from telegram import Bot
 from telegram.error import TelegramError
+
+from models import IssueResult, PendingInvite
+
+if TYPE_CHECKING:
+    from database import DatabaseStorage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,43 +45,18 @@ class InviteError(Exception):
     """Не удалось выдать ссылку по понятной пользователю причине."""
 
 
-@dataclass
-class PendingInvite:
-    """Выданная, но ещё не использованная ссылка."""
-
-    invite_link: str
-    target_chat_id: int
-    user_id: int
-    op_code: str
-    expires_at: float
-    source_chat_id: int | None = None
-    source_message_id: int | None = None
-
-    @property
-    def is_expired(self) -> bool:
-        return time.time() >= self.expires_at
-
-    @property
-    def seconds_left(self) -> int:
-        return max(0, int(self.expires_at - time.time()))
-
-
-@dataclass
-class IssueResult:
-    invite: PendingInvite
-    reused: bool = False
-
-
 class InviteManager:
     """Хранит и обслуживает персональные ссылки-приглашения."""
 
     def __init__(
         self,
-        path: Path,
+        path: Path | None = None,
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         hourly_limit: int = DEFAULT_HOURLY_LIMIT,
+        db: DatabaseStorage | None = None,
     ) -> None:
         self.path = path
+        self.db = db
         self.ttl_seconds = ttl_seconds
         self.hourly_limit = hourly_limit
         self._pending: dict[str, PendingInvite] = {}
@@ -87,28 +68,36 @@ class InviteManager:
     # Хранилище
     # ------------------------------------------------------------------ #
     def _load(self) -> None:
-        if not self.path.exists():
+        if self.db is not None:
+            self._pending = self.db.load_pending_invites()
             return
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            LOGGER.warning("Не удалось прочитать %s: %s", self.path, error)
-            return
-        for item in raw.get("pending", []):
+
+        if self.path is not None and self.path.exists():
             try:
-                invite = PendingInvite(**item)
-            except TypeError:
-                continue
-            self._pending[invite.invite_link] = invite
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                LOGGER.warning("Не удалось прочитать %s: %s", self.path, error)
+                return
+            for item in raw.get("pending", []):
+                try:
+                    invite = PendingInvite(**item)
+                except TypeError:
+                    continue
+                self._pending[invite.invite_link] = invite
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"pending": [asdict(item) for item in self._pending.values()]}
-        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        temporary.replace(self.path)
+        if self.db is not None:
+            for invite in self._pending.values():
+                self.db.save_pending_invite(invite)
+
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"pending": [asdict(item) for item in self._pending.values()]}
+            temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            temporary.replace(self.path)
 
     # ------------------------------------------------------------------ #
     # Поиск
@@ -162,9 +151,6 @@ class InviteManager:
                     chat_id=target_chat_id,
                     name=f"{op_code}-{user_id}"[:32],
                     expire_date=expire_at,
-                    # Ключевой момент: ссылка создаёт заявку, а не вступление.
-                    # member_limit намеренно НЕ используется — он несовместим
-                    # с creates_join_request и пускает любого, кто успел первым.
                     creates_join_request=True,
                 )
             except TelegramError as error:
@@ -185,6 +171,11 @@ class InviteManager:
             )
             self._pending[invite.invite_link] = invite
             self._issue_log.setdefault(user_id, []).append(time.time())
+            if self.db is not None:
+                self.db.save_pending_invite(invite)
+                self.db.log_onboarding_action(
+                    user_id, target_chat_id, "issued_invite", f"op={op_code}"
+                )
             self._save()
             LOGGER.info(
                 "Выдана ссылка в чат %s для пользователя %s (ОП %s)",
@@ -200,16 +191,16 @@ class InviteManager:
         """Запомнить сообщение со ссылкой, чтобы удалить его позже."""
         invite.source_chat_id = chat_id
         invite.source_message_id = message_id
+        if self.db is not None:
+            self.db.save_pending_invite(invite)
         self._save()
 
     def set_source_chat(self, invite: PendingInvite, chat_id: int) -> None:
-        """Запомнить, из какого чата (общего чата первого курса) пришёл
-        запрос на эту ссылку — даже если карточка/сообщение со ссылкой
-        никогда не понадобится (например, личка сработала с первой попытки).
-        Это даёт вызывающему коду chat_id, нужный для последующей очистки
-        всей переписки по онбордингу в этом чате."""
+        """Запомнить исходный чат первого курса."""
         if invite.source_chat_id is None:
             invite.source_chat_id = chat_id
+            if self.db is not None:
+                self.db.save_pending_invite(invite)
             self._save()
 
     # ------------------------------------------------------------------ #
@@ -218,15 +209,7 @@ class InviteManager:
     async def handle_join_request(
         self, bot: Bot, chat_id: int, user_id: int, invite_link: str | None
     ) -> tuple[str, PendingInvite | None]:
-        """Решить судьбу заявки.
-
-        Возвращает ``(outcome, invite)``, где outcome — ``approved``,
-        ``declined`` или ``ignored``. ``invite`` — снимок записи (даже уже
-        отозванной) для approved/declined, чтобы вызывающий код мог, например,
-        подчистить остальную переписку по онбордингу в чате-источнике.
-        ``ignored`` — ссылка создана не ботом (например, вручную админом),
-        такие заявки бот не трогает и оставляет людям.
-        """
+        """Решить судьбу заявки на вступление."""
         if not invite_link:
             return "ignored", None
 
@@ -248,6 +231,13 @@ class InviteManager:
                     await bot.decline_chat_join_request(chat_id, user_id)
                 except TelegramError as error:
                     LOGGER.warning("Не удалось отклонить заявку: %s", error)
+                if self.db is not None:
+                    self.db.log_onboarding_action(
+                        user_id,
+                        chat_id,
+                        "declined_join",
+                        f"reason={reason},owner={invite.user_id}",
+                    )
                 # Ссылка скомпрометирована — сжигаем её целиком.
                 await self._retire(bot, invite)
                 return "declined", invite
@@ -258,6 +248,10 @@ class InviteManager:
                 LOGGER.warning("Не удалось одобрить заявку: %s", error)
                 return "ignored", None
 
+            if self.db is not None:
+                self.db.log_onboarding_action(
+                    user_id, chat_id, "approved_join", f"op={invite.op_code}"
+                )
             await self._retire(bot, invite)
             LOGGER.info("Пользователь %s принят в чат %s", user_id, chat_id)
             return "approved", invite
@@ -268,6 +262,8 @@ class InviteManager:
     async def _retire(self, bot: Bot, invite: PendingInvite) -> None:
         """Отозвать ссылку, удалить сообщение с ней и забыть запись."""
         self._pending.pop(invite.invite_link, None)
+        if self.db is not None:
+            self.db.delete_pending_invite(invite.invite_link)
         self._save()
         try:
             await bot.revoke_chat_invite_link(
@@ -295,7 +291,7 @@ class InviteManager:
                 await self._retire(bot, invite)
 
     async def sweep(self, bot: Bot) -> int:
-        """Подчистить просроченные ссылки (например, после перезапуска)."""
+        """Подчистить просроченные ссылки."""
         async with self._lock:
             expired = [i for i in self._pending.values() if i.is_expired]
             for invite in expired:
