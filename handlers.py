@@ -641,6 +641,21 @@ async def handle_op_message(
             "только в одну ОП."
         )
 
+    db: DatabaseStorage | None = context.application.bot_data.get("db")
+    if db is not None:
+        db.log_onboarding_action(
+            user_id,
+            chat_id,
+            "op_matched",
+            f"ops={','.join(o.code for o in matched_ops)};text={text}",
+        )
+        db.record_analytics_event(
+            "op_identified",
+            user_id,
+            chat_id,
+            {"matched_ops": [o.code for o in matched_ops], "text": text},
+        )
+
     sent_msg = await reply_with_connect_retry(
         message,
         reply_text,
@@ -887,6 +902,15 @@ async def welcome_new_members(
                 )
             else:
                 tracker.add_user(message.chat.id, member.id)
+            db: DatabaseStorage | None = context.application.bot_data.get("db")
+            if db is not None:
+                db.log_onboarding_action(member.id, message.chat.id, "new_member_welcomed")
+                db.record_analytics_event(
+                    "welcome_sent",
+                    member.id,
+                    message.chat.id,
+                    {"username": member.username, "first_name": member.first_name},
+                )
             LOGGER.info(
                 "Новый участник добавлен в трекер: chat_id=%s, user_id=%s",
                 message.chat.id,
@@ -937,6 +961,16 @@ async def welcome_chat_member_update(
             tracker.add_welcome_message(result.chat.id, sent_msg.message_id, user.id)
         else:
             tracker.add_user(result.chat.id, user.id)
+
+        db: DatabaseStorage | None = context.application.bot_data.get("db")
+        if db is not None:
+            db.log_onboarding_action(user.id, result.chat.id, "chat_member_welcomed")
+            db.record_analytics_event(
+                "welcome_sent",
+                user.id,
+                result.chat.id,
+                {"username": user.username, "first_name": user.first_name},
+            )
         LOGGER.info(
             "Новый участник (chat_member) добавлен в трекер: chat_id=%s, user_id=%s",
             result.chat.id,

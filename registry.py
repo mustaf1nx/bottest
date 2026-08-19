@@ -42,6 +42,9 @@ class AdminRegistry:
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                 raise RuntimeError(f"Не удалось прочитать список админов {self.path}") from error
 
+        if self.db is not None and self._ids:
+            self.db.add_admins(self._ids)
+
         if self.path is not None and not self.path.exists() and self._ids:
             self._save_file()
 
@@ -88,8 +91,16 @@ class OPRegistry:
             if loaded_db:
                 self._ops = loaded_db
                 return
-            # Seed DB with default ops if empty
-            self.db.seed_ops(DEFAULT_OPS)
+            # If DB is empty, prefer importing from JSON file if it exists, otherwise seed DEFAULT_OPS
+            source_data = DEFAULT_OPS
+            if self.path is not None and self.path.exists():
+                try:
+                    data = json.loads(self.path.read_text(encoding="utf-8"))
+                    if isinstance(data, dict) and data:
+                        source_data = data
+                except Exception as error:
+                    LOGGER.warning("Не удалось прочитать %s для импорта в БД: %s", self.path, error)
+            self.db.seed_ops(source_data)
             self._ops = self.db.load_ops()
             return
 
