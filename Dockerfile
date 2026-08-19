@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir --requirement requirements.txt \
     && mkdir -p /data \
     && chown bot:bot /data
 
-COPY --chown=bot:bot bot.py markov.py invites.py userbot.py greetings.txt op_admins.json ./
+COPY --chown=bot:bot *.py greetings.txt op_admins.json ./
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
