@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
@@ -26,7 +25,6 @@ from telegram.constants import ChatMemberStatus, ChatType, ParseMode
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import (
     Application,
-    ChatMemberHandler,
     CallbackQueryHandler,
     ChatJoinRequestHandler,
     CommandHandler,
@@ -280,10 +278,9 @@ class OPProgram:
 class WelcomeTracker:
     """Tracks welcome messages and recently joined members so OP reactions only trigger for the actual new member."""
 
-    def __init__(self, max_messages: int = 10, ttl_seconds: float = 900.0) -> None:
+    def __init__(self, max_messages: int = 10) -> None:
         self.max_messages = max_messages
-        self.ttl_seconds = ttl_seconds
-        self._active_new_members: dict[tuple[int, int], dict[str, Any]] = {}
+        self._active_new_members: dict[tuple[int, int], int] = {}
         self._welcome_messages: dict[tuple[int, int], int] = {}
         self._pending_clarification: set[tuple[int, int]] = set()
         # Members who already got a working "join" button/invite. Further
@@ -296,52 +293,17 @@ class WelcomeTracker:
         # otherwise the exchange just sits there and floods the main chat.
         self._thread_messages: dict[tuple[int, int], list[int]] = {}
 
-    def should_welcome(self, chat_id: int, user_id: int, debounce_seconds: float = 15.0) -> bool:
-        now = time.time()
-        self._recent_welcomes = {k: ts for k, ts in self._recent_welcomes.items() if now - ts < debounce_seconds}
-        key = (chat_id, user_id)
-        if key in self._recent_welcomes:
-            return False
-        self._recent_welcomes[key] = now
-        return True    
-
     def add_welcome_message(
         self, chat_id: int, welcome_message_id: int, target_user_id: int
     ) -> None:
         """Anchor a bot message to a specific member. Only replies to this exact
         message from this exact member will be treated as that member's answer."""
         self._welcome_messages[(chat_id, welcome_message_id)] = target_user_id
-        self.add_user(chat_id, target_user_id)
+        self._active_new_members[(chat_id, target_user_id)] = self.max_messages
         self.track_thread_message(chat_id, target_user_id, welcome_message_id)
 
     def add_user(self, chat_id: int, user_id: int) -> None:
-        self._active_new_members[(chat_id, user_id)] = {
-            "messages_left": self.max_messages,
-            "joined_at": time.time(),
-        }
-
-    def is_active_newcomer(self, chat_id: int, user_id: int) -> bool:
-        key = (chat_id, user_id)
-        info = self._active_new_members.get(key)
-        if not info:
-            return False
-        if time.time() - info["joined_at"] > self.ttl_seconds:
-            self._active_new_members.pop(key, None)
-            return False
-        return info["messages_left"] > 0
-
-    def is_anchored_reply(
-        self,
-        chat_id: int,
-        user_id: int,
-        reply_to_message_id: int | None = None,
-    ) -> bool:
-
-        if reply_to_message_id is None:
-            return False
-
-        welcome_target = self._welcome_messages.get((chat_id, reply_to_message_id))
-        return welcome_target is not None and user_id == welcome_target
+        self._active_new_members[(chat_id, user_id)] = self.max_messages
 
     def is_target_member(
         self,
@@ -349,7 +311,20 @@ class WelcomeTracker:
         user_id: int,
         reply_to_message_id: int | None = None,
     ) -> bool:
-        return self.is_anchored_reply(chat_id, user_id, reply_to_message_id) or self.is_active_newcomer(chat_id, user_id)
+        # Require an explicit Reply to a bot message that was anchored to a
+        # specific member (their welcome message or a follow-up prompt sent
+        # to them). This is the only way to match — plain messages that
+        # merely mention an OP code (e.g. someone just chatting and typing
+        # "se") are never treated as an answer, since many different people
+        # talk in the chat and could coincidentally type something like that.
+        if reply_to_message_id is None:
+            return False
+
+        welcome_target = self._welcome_messages.get((chat_id, reply_to_message_id))
+        if welcome_target is None:
+            return False
+
+        return user_id == welcome_target
 
     def has_answered(self, chat_id: int, user_id: int) -> bool:
         return (chat_id, user_id) in self._answered
@@ -366,8 +341,8 @@ class WelcomeTracker:
     def record_message(self, chat_id: int, user_id: int) -> None:
         key = (chat_id, user_id)
         if key in self._active_new_members:
-            self._active_new_members[key]["messages_left"] -= 1
-            if self._active_new_members[key]["messages_left"] <= 0:
+            self._active_new_members[key] -= 1
+            if self._active_new_members[key] <= 0:
                 del self._active_new_members[key]
 
     def remove_user(self, chat_id: int, user_id: int) -> None:
@@ -774,89 +749,23 @@ async def show_ids(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 QUESTION_PATTERN = re.compile(
     r"(?i)\b("
-    r"кто\s+(с|на|из|тут|в|поступил|поступает|учится|выбрал|идет|шел|пойдет|туда)|"
-    r"есть\s+(ли\s+)?(тут\s+)?кто|"
-    r"кто[- ](нибудь|то)|"
+    r"кто\s+(с|на|из|тут|в|поступил|поступает|учится|выбрал|идет|шел)|"
+    r"есть\s+(ли\s+)?кто|"
+    r"кто[- ]нибудь|"
     r"а\s+кто|"
-    r"ищу\s+(кто|кого|с|на|из)|"
+    r"ищу\s+(кто|кого|с|на)|"
     r"много\s+(ли\s+)?(тут\s+)?(кто|с|на|из)|"
-    r"кого\s+больше|"
-    r"что\s+(лучше|выбрать|посоветуете)|"
-    r"куда\s+(лучше|поступать|идти)|"
-    r"стоит\s+ли\s+(идти\s+на|выбирать)|"
-    r"расскажите\s+(про|о)|"
-    r"подскажите\s+(про|по|о|насчет)|"
-    r"как\s+(вам|там|учиться\s+на)|"
-    r"чем\s+отличается|"
-    r"а\s+ты\s+(с|на|из)|"
-    r"вы\s+(с|на|из)"
-    r")\b"
-)
-
-SELF_ID_PREFIX_PATTERN = re.compile(
-    r"(?i)\b("
-    r"я\s+(с|из|на|в|поступил|поступила|учусь|выбрал|выбрала|иду)|"
-    r"моя\s+оп|"
-    r"мо[её]\s+направление|"
-    r"моя\s+программа|"
-    r"поступил(а)?\s+(на|в)|"
-    r"выбрал(а)?|"
-    r"учусь\s+(на|в)|"
-    r"направление|"
-    r"программа|"
-    r"специальность"
+    r"кого\s+больше"
     r")\b"
 )
 
 
-CS_CODE_PATTERN = re.compile(
-    r"(?i)^\s*(?:(?:привет[,\s]*)?(?:я\s+(?:с|из|на|в)\s+)?|моя\s+оп\s*)?(cs|кс|ыс)[.!]?\s*$"
-)
-
+CS_CODE_PATTERN = re.compile(r"^\s*(cs|кс)\s*$", re.IGNORECASE)
 
 AMBIGUOUS_CS_QUESTION = (
     "Вы о <b>Computer Science (IT)</b> или <b>Cybersecurity (CS)</b>?\n\n"
     "Ответьте, выбрав один из вариантов."
 )
-
-
-def is_inquiry_or_question(text: str) -> bool:
-    if not text:
-        return False
-    if QUESTION_PATTERN.search(text):
-        return True
-    if "?" in text and not SELF_ID_PREFIX_PATTERN.search(text):
-        return True
-    return False
-
-
-def is_likely_op_declaration(text: str, matched_ops: list[OPProgram]) -> bool:
-    if not text or not matched_ops:
-        return False
-
-    clean_text = text.strip()
-    words = clean_text.split()
-    word_count = len(words)
-
-    if word_count <= 4:
-        return True
-
-    if SELF_ID_PREFIX_PATTERN.search(clean_text):
-        return True
-
-    text_lower = clean_text.lower()
-    text_swapped = swap_keyboard_layout(clean_text).lower()
-    for op in matched_ops:
-        for alias in op.aliases:
-            alias_clean = alias.strip().lower()
-            if len(alias_clean) >= 4 and (alias_clean in text_lower or alias_clean in text_swapped):
-                return True
-        if len(op.name) >= 4 and (op.name.lower() in text_lower or op.name.lower() in text_swapped):
-            return True
-
-    return False
-
-
 
 
 def build_op_response(user_mention: str, op: OPProgram) -> str:
@@ -1245,15 +1154,6 @@ def resolve_cs_choice(op_registry: OPRegistry, text: str) -> OPProgram | None:
     Full names and aliases are matched through the registry."""
     if not text:
         return None
-    clean = text.strip().lower()
-    if clean in ("1", "it", "ит", "bda"):
-        op = op_registry.get("IT")
-        if op:
-            return op
-    if clean in ("2", "cs", "кс", "кибербез"):
-        op = op_registry.get("CS")
-        if op:
-            return op
     if CS_CODE_PATTERN.search(text):
         return op_registry.get("CS")
     matched = [op for op in op_registry.find_matching_ops(text) if op.code in ("IT", "CS")]
@@ -1279,8 +1179,9 @@ async def handle_op_message(
 
     reply_to = message.reply_to_message
     reply_to_id = reply_to.message_id if reply_to else None
-    is_reply = tracker.is_anchored_reply(chat_id, user_id, reply_to_id)
-    is_newcomer = tracker.is_active_newcomer(chat_id, user_id)
+
+    if not tracker.is_target_member(chat_id, user_id, reply_to_id):
+        return
 
     if tracker.has_answered(chat_id, user_id):
         # Уже выдали рабочую кнопку/ссылку раньше — один человек вступает
@@ -1290,11 +1191,8 @@ async def handle_op_message(
 
     tracker.track_thread_message(chat_id, user_id, message.message_id)
 
-    if not is_reply and not is_newcomer:
+    if QUESTION_PATTERN.search(message.text):
         return
-
-    text = message.text.strip()
-    LOGGER.info("handle_op_message: user_id=%s, text=%r, is_reply=%s, is_newcomer=%s", user_id, text, is_reply, is_newcomer)
 
     op_registry: OPRegistry = context.application.bot_data["op_registry"]
     user_mention = (
@@ -1302,14 +1200,11 @@ async def handle_op_message(
     )
 
     if tracker.is_pending_clarification(chat_id, user_id):
-        op = resolve_cs_choice(op_registry, text)
+        op = resolve_cs_choice(op_registry, message.text)
         if op is None:
-            if is_reply:
-                await ask_cs_clarification(
-                    message, user_mention, tracker, chat_id, user_id
-                )
-            else:
-                tracker.record_message(chat_id, user_id)
+            await ask_cs_clarification(
+                message, user_mention, tracker, chat_id, user_id
+            )
             return
         tracker.clear_pending_clarification(chat_id, user_id)
         tracker.remove_user(chat_id, user_id)
@@ -1325,38 +1220,32 @@ async def handle_op_message(
             tracker.track_thread_message(chat_id, user_id, sent_msg.message_id)
         return
 
-    if is_inquiry_or_question(text):
-        tracker.record_message(chat_id, user_id)
-        return
-
-    if CS_CODE_PATTERN.search(text):
+    if CS_CODE_PATTERN.search(message.text):
         await ask_cs_clarification(
             message, user_mention, tracker, chat_id, user_id
         )
         return
 
-    matched_ops = op_registry.find_matching_ops(text)
+    matched_ops = op_registry.find_matching_ops(message.text)
 
     if not matched_ops:
         tracker.record_message(chat_id, user_id)
-        if is_reply:
-            help_text = (
-                f"Не удалось распознать ОП в вашем сообщении, {user_mention}. 🤔\n\n"
-                "Пожалуйста, укажите код или название вашей ОП (например: <b>SE</b>, <b>CS</b>, <b>IT</b>, <b>BDA</b>, <b>MCS</b>).\n"
-                "Полный список доступных ОП можно посмотреть с помощью команды /ops."
-            )
-            sent_msg = await reply_with_connect_retry(
-                message,
-                help_text,
-                parse_mode=ParseMode.HTML,
-                reply_to_message_id=message.message_id,
-            )
-            if sent_msg and hasattr(sent_msg, "message_id"):
-                tracker.add_welcome_message(chat_id, sent_msg.message_id, user_id)
-        return
-
-    if not is_reply and not is_likely_op_declaration(text, matched_ops):
-        tracker.record_message(chat_id, user_id)
+        help_text = (
+            f"Не удалось распознать ОП в вашем сообщении, {user_mention}. 🤔\n\n"
+            "Пожалуйста, укажите код или название вашей ОП (например: <b>SE</b>, <b>CS</b>, <b>IT</b>, <b>BDA</b>, <b>MCS</b>).\n"
+            "Полный список доступных ОП можно посмотреть с помощью команды /ops."
+        )
+        sent_msg = await reply_with_connect_retry(
+            message,
+            help_text,
+            parse_mode=ParseMode.HTML,
+            reply_to_message_id=message.message_id,
+        )
+        # Anchor this follow-up prompt to the same member, so if they reply
+        # to *it* instead of the original welcome message, it still counts —
+        # but nobody else's reply to it will.
+        if sent_msg and hasattr(sent_msg, "message_id"):
+            tracker.add_welcome_message(chat_id, sent_msg.message_id, user_id)
         return
 
     tracker.remove_user(chat_id, user_id)
@@ -1673,10 +1562,6 @@ async def welcome_new_members(
                     "команды /start и /preview.",
                 )
                 continue
-
-            if not tracker.should_welcome(message.chat.id, member.id):
-                continue            
-
             if op is not None:
                 # Это чат конкретной ОП — не спрашиваем код ОП и не ждём Reply,
                 # это только для общего чата первого курса.
@@ -1689,7 +1574,6 @@ async def welcome_new_members(
                 tracker.add_welcome_message(message.chat.id, sent_msg.message_id, member.id)
             else:
                 tracker.add_user(message.chat.id, member.id)
-            LOGGER.info("Новый участник добавлен в трекер: chat_id=%s, user_id=%s", message.chat.id, member.id)            
         except TelegramError as error:
             # Не даём сбою на одном участнике (флуд-лимит, таймаут и т.п.,
             # исчерпавший все повторы) сорвать приветствие остальных членов
@@ -1701,44 +1585,6 @@ async def welcome_new_members(
                 message.chat.id,
                 error,
             )
-
-async def welcome_chat_member_update(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    result = update.chat_member
-    if not result or not result.chat:
-        return
-    was_member = result.old_chat_member.status in (
-        ChatMemberStatus.MEMBER,
-        ChatMemberStatus.RESTRICTED,
-        ChatMemberStatus.ADMINISTRATOR,
-        ChatMemberStatus.OWNER,
-    )
-    is_member = result.new_chat_member.status in (
-        ChatMemberStatus.MEMBER,
-        ChatMemberStatus.RESTRICTED,
-    )
-    if not was_member and is_member:
-        user = result.new_chat_member.user
-        if user.is_bot:
-            return
-        tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
-        if not tracker.should_welcome(result.chat.id, user.id):
-            return
-        chain: MarkovChain = context.application.bot_data["greeting_chain"]
-        settings: Settings = context.application.bot_data["settings"]
-        text = build_welcome_text(chain, user.mention_html(), settings.max_words)
-        sent_msg = await context.bot.send_message(
-            chat_id=result.chat.id,
-            text=text,
-            parse_mode=ParseMode.HTML,
-        )
-        if sent_msg and hasattr(sent_msg, "message_id"):
-            tracker.add_welcome_message(result.chat.id, sent_msg.message_id, user.id)
-        else:
-            tracker.add_user(result.chat.id, user.id)
-        LOGGER.info("Новый участник (chat_member) добавлен в трекер: chat_id=%s, user_id=%s", result.chat.id, user.id)
-
 
 
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1814,7 +1660,6 @@ def create_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("id", show_ids))
     application.add_handler(CommandHandler("ops", show_ops))
     application.add_handler(CommandHandler("setopadmin", set_op_admin))
-    application.add_handler(ChatMemberHandler(welcome_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(CommandHandler("setopchat", set_op_chat))
     application.add_handler(CommandHandler("setopgroup", set_op_chat))  # алиас /setopchat
     application.add_handler(CommandHandler("opchats", show_op_chats))
