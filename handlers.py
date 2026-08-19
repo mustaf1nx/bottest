@@ -26,6 +26,7 @@ from helpers import (
     build_start_deep_link,
     build_welcome_text,
     format_admin_tag,
+    get_user_mention,
     is_chat_member,
     is_connection_error,
     is_inquiry_or_question,
@@ -171,7 +172,7 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     chain: MarkovChain = context.application.bot_data["greeting_chain"]
     settings: Settings = context.application.bot_data["settings"]
-    text = build_welcome_text(chain, user.mention_html(), settings.max_words)
+    text = build_welcome_text(chain, get_user_mention(user), settings.max_words)
     await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
 
 
@@ -887,12 +888,13 @@ async def welcome_new_members(
             if not tracker.should_welcome(message.chat.id, member.id):
                 continue
 
+            mention = get_user_mention(member)
             if op is not None:
-                text = build_op_chat_welcome_text(member.mention_html(), op)
+                text = build_op_chat_welcome_text(mention, op)
                 await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
                 continue
 
-            text = build_welcome_text(chain, member.mention_html(), settings.max_words)
+            text = build_welcome_text(chain, mention, settings.max_words)
             sent_msg = await reply_with_connect_retry(
                 message, text, parse_mode=ParseMode.HTML
             )
@@ -949,9 +951,24 @@ async def welcome_chat_member_update(
         tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
         if not tracker.should_welcome(result.chat.id, user.id):
             return
+
+        op_registry: OPRegistry = context.application.bot_data["op_registry"]
+        op = op_registry.find_by_chat_id(result.chat.id)
+        mention = get_user_mention(user)
+
+        if op is not None:
+            # Чат конкретной ОП — приветствуем без вопроса про ОП
+            text = build_op_chat_welcome_text(mention, op)
+            await context.bot.send_message(
+                chat_id=result.chat.id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         chain: MarkovChain = context.application.bot_data["greeting_chain"]
         settings: Settings = context.application.bot_data["settings"]
-        text = build_welcome_text(chain, user.mention_html(), settings.max_words)
+        text = build_welcome_text(chain, mention, settings.max_words)
         sent_msg = await context.bot.send_message(
             chat_id=result.chat.id,
             text=text,

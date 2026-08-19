@@ -41,6 +41,36 @@ def format_admin_tag(admin: str) -> str:
     return html.escape(admin_str) if not admin_str.startswith("<a ") else admin_str
 
 
+def get_user_mention(user: object | None) -> str:
+    """Safely build user HTML mention with fallback for missing, empty, or single-character names."""
+    if user is None:
+        return "Студент"
+
+    full_name = getattr(user, "full_name", "") or ""
+    full_name = full_name.strip()
+    username = getattr(user, "username", None)
+    user_id = getattr(user, "id", None)
+
+    # If full name is empty, whitespace, or just punctuation (like "." or "-")
+    if not full_name or not any(c.isalnum() for c in full_name):
+        if username:
+            return f"@{html.escape(username)}"
+        if user_id:
+            return f'<a href="tg://user?id={user_id}">Студент</a>'
+        return "Студент"
+
+    mention_func = getattr(user, "mention_html", None)
+    if callable(mention_func):
+        res = mention_func()
+        if res:
+            return res
+
+    if user_id:
+        return f'<a href="tg://user?id={user_id}">{html.escape(full_name)}</a>'
+    return html.escape(full_name)
+
+
+
 def build_welcome_text(chain: MarkovChain, mention: str, max_words: int) -> str:
     """Build dynamic Markov welcome message with mention and onboarding reply hint."""
     generated = html.escape(chain.generate(max_words=max_words))

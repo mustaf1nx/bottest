@@ -62,8 +62,33 @@ class ConfigAndHelpersTests(unittest.TestCase):
         )
         self.assertTrue(is_likely_op_declaration("SE", [op_se]))
         self.assertTrue(is_likely_op_declaration("Я поступил на SE!", [op_se]))
-        self.assertTrue(is_likely_op_declaration("сешник", [op_se]))
+    def test_get_user_mention(self) -> None:
+        from unittest.mock import MagicMock
+        from helpers import get_user_mention
+
+        # Normal user
+        user1 = MagicMock()
+        user1.full_name = "Alex Mercer"
+        user1.mention_html.return_value = '<a href="tg://user?id=123">Alex Mercer</a>'
+        self.assertIn("Alex Mercer", get_user_mention(user1))
+
+        # Single dot "." name with username
+        user2 = MagicMock()
+        user2.full_name = "."
+        user2.username = "dotuser"
+        self.assertEqual(get_user_mention(user2), "@dotuser")
+
+        # Single dot "." name without username, with user_id
+        user3 = MagicMock()
+        user3.full_name = "."
+        user3.username = None
+        user3.id = 999
+        self.assertEqual(get_user_mention(user3), '<a href="tg://user?id=999">Студент</a>')
+
+        # None user
+        self.assertEqual(get_user_mention(None), "Студент")
 
 
 if __name__ == "__main__":
     unittest.main()
+

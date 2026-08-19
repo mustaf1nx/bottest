@@ -686,6 +686,46 @@ class NetworkErrorHandlingTests(unittest.IsolatedAsyncioTestCase):
         mock_logger.warning.assert_not_called()
 
 
+class ChatMemberUpdateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_welcome_chat_member_update_in_op_chat(self) -> None:
+        from bot import welcome_chat_member_update
+        from telegram.constants import ChatMemberStatus
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "op_admins.json"
+            registry = OPRegistry(path)
+            registry.set_chat("SE", -1001111111111, "SE Chat")
+
+            tracker = MagicMock()
+            tracker.should_welcome.return_value = True
+
+            context = MagicMock()
+            context.bot.send_message = AsyncMock()
+            context.application.bot_data = {
+                "op_registry": registry,
+                "welcome_tracker": tracker,
+                "greeting_chain": MagicMock(),
+                "settings": MagicMock(max_words=28),
+            }
+
+            update = MagicMock()
+            update.chat_member.chat.id = -1001111111111
+            update.chat_member.old_chat_member.status = ChatMemberStatus.LEFT
+            update.chat_member.new_chat_member.status = ChatMemberStatus.MEMBER
+            update.chat_member.new_chat_member.user.is_bot = False
+            update.chat_member.new_chat_member.user.full_name = "Alex"
+            update.chat_member.new_chat_member.user.mention_html.return_value = "Alex"
+
+            await welcome_chat_member_update(update, context)
+
+            context.bot.send_message.assert_called_once()
+            called_text = context.bot.send_message.call_args[1]["text"]
+            self.assertIn("Это чат ОП", called_text)
+            self.assertIn("SE", called_text)
+            self.assertNotIn("Ответь на это сообщение", called_text)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
