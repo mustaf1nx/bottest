@@ -47,6 +47,11 @@ class WelcomeTracker:
             "messages_left": self.max_messages,
             "joined_at": time.time(),
         }
+        # Свежее приветствие = новая попытка онбординга (человек вышел и
+        # зашёл заново, так и не завершив вступление в чат ОП в прошлый
+        # раз). Старый "answered" от предыдущей попытки не должен блокировать
+        # ответы на это новое сообщение — иначе бот молча игнорирует Reply.
+        self._answered.discard((chat_id, user_id))
 
     def is_active_newcomer(self, chat_id: int, user_id: int) -> bool:
         """Check if user joined recently and has remaining message budget."""
