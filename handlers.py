@@ -32,6 +32,7 @@ from helpers import (
     is_connection_error,
     is_inquiry_or_question,
     is_likely_op_declaration,
+    is_stale_join_event,
     reply_with_connect_retry,
     resolve_cs_choice,
 )
@@ -173,7 +174,9 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     chain: MarkovChain = context.application.bot_data["greeting_chain"]
     settings: Settings = context.application.bot_data["settings"]
-    text = build_welcome_text(chain, get_user_mention(user), settings.max_words)
+    op_registry: OPRegistry = context.application.bot_data["op_registry"]
+    op_codes = sorted(op_registry.get_all().keys())
+    text = build_welcome_text(chain, get_user_mention(user), settings.max_words, op_codes)
     await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
 
 
@@ -867,6 +870,17 @@ async def welcome_new_members(
     if not message or not message.new_chat_members or not message.chat:
         return
 
+    startup_time = context.application.bot_data.get("startup_time")
+    if is_stale_join_event(message.date, startup_time):
+        LOGGER.info(
+            "Пропускаем приветствие: событие вступления старее запуска бота "
+            "(chat_id=%s, message_date=%s, startup=%s)",
+            message.chat.id,
+            message.date,
+            startup_time,
+        )
+        return
+
     chain: MarkovChain = context.application.bot_data["greeting_chain"]
     settings: Settings = context.application.bot_data["settings"]
     tracker: WelcomeTracker = context.application.bot_data["welcome_tracker"]
@@ -874,6 +888,7 @@ async def welcome_new_members(
     bot_id = context.bot.id
 
     op = op_registry.find_by_chat_id(message.chat.id)
+    op_codes = sorted(op_registry.get_all().keys())
 
     for member in message.new_chat_members:
         try:
@@ -908,7 +923,7 @@ async def welcome_new_members(
                 )
                 continue
 
-            text = build_welcome_text(chain, mention, settings.max_words)
+            text = build_welcome_text(chain, mention, settings.max_words, op_codes)
             sent_msg = await reply_with_connect_retry(
                 message, text, parse_mode=ParseMode.HTML
             )
@@ -948,6 +963,18 @@ async def welcome_chat_member_update(
     result = update.chat_member
     if not result or not result.chat:
         return
+
+    startup_time = context.application.bot_data.get("startup_time")
+    if is_stale_join_event(result.date, startup_time):
+        LOGGER.info(
+            "Пропускаем приветствие (chat_member): событие старее запуска "
+            "бота (chat_id=%s, event_date=%s, startup=%s)",
+            result.chat.id,
+            result.date,
+            startup_time,
+        )
+        return
+
     was_member = result.old_chat_member.status in (
         ChatMemberStatus.MEMBER,
         ChatMemberStatus.RESTRICTED,
@@ -994,7 +1021,8 @@ async def welcome_chat_member_update(
 
         chain: MarkovChain = context.application.bot_data["greeting_chain"]
         settings: Settings = context.application.bot_data["settings"]
-        text = build_welcome_text(chain, mention, settings.max_words)
+        op_codes = sorted(op_registry.get_all().keys())
+        text = build_welcome_text(chain, mention, settings.max_words, op_codes)
         sent_msg = await context.bot.send_message(
             chat_id=result.chat.id,
             text=text,

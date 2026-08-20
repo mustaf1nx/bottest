@@ -72,14 +72,41 @@ def get_user_mention(user: object | None) -> str:
 
 
 
-def build_welcome_text(chain: MarkovChain, mention: str, max_words: int) -> str:
+def is_stale_join_event(event_time: object, startup_time: object) -> bool:
+    """Check whether a join event happened before the bot's current run started.
+
+    Telegram delivers everything that queued up while a bot instance was
+    offline (e.g. during a redeploy) as soon as it reconnects. Without this
+    check those backlogged join events would trigger a fresh "welcome +
+    which is your OP?" for people who actually joined while the bot wasn't
+    running at all.
+    """
+    if startup_time is None or event_time is None:
+        return False
+    return event_time < startup_time
+
+
+def build_welcome_text(
+    chain: MarkovChain,
+    mention: str,
+    max_words: int,
+    op_codes: list[str] | None = None,
+) -> str:
     """Build dynamic Markov welcome message with mention and onboarding reply hint."""
     generated = html.escape(chain.generate(max_words=max_words))
-    return (
-        f"{generated}\n\n"
-        f"Рады видеть тебя, {mention}! 👋\n\n"
-        "💡 <b>Ответь на это сообщение (Reply)</b>, указав свою ОП (например: <code>SE</code>, <code>CS</code>, <code>IT</code>), чтобы узнать своего ответственного админа!"
-    )
+    if op_codes:
+        codes_line = ", ".join(f"<code>{html.escape(code)}</code>" for code in op_codes)
+        hint = (
+            "💡 <b>Ответь на это сообщение (Reply)</b>, указав свою ОП, чтобы "
+            f"узнать своего ответственного админа!\n\nДоступные ОП: {codes_line}"
+        )
+    else:
+        hint = (
+            "💡 <b>Ответь на это сообщение (Reply)</b>, указав свою ОП (например: "
+            "<code>SE</code>, <code>CS</code>, <code>IT</code>), чтобы узнать "
+            "своего ответственного админа!"
+        )
+    return f"{generated}\n\nРады видеть тебя, {mention}! 👋\n\n{hint}"
 
 
 def build_op_chat_welcome_text(mention: str, op: OPProgram) -> str:

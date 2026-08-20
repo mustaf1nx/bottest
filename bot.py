@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from telegram import Update
@@ -199,6 +200,11 @@ def create_application(settings: Settings) -> Application:
     )
 
     async def on_startup(app: Application) -> None:
+        # Записываем момент запуска бота: события вступления (join), которые
+        # произошли раньше этого момента (например, пока бот был выключен
+        # между деплоями), не должны приводить к приветствию — Telegram
+        # доставит их одним пакетом сразу при подключении бота.
+        app.bot_data["startup_time"] = datetime.now(timezone.utc)
         if userbot is not None:
             await userbot.start()
         await invite_manager.sweep(app.bot)
@@ -227,6 +233,7 @@ def create_application(settings: Settings) -> Application:
             "userbot": userbot,
             "settings": settings,
             "db": db,
+            "startup_time": None,
         }
     )
 
