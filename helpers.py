@@ -25,6 +25,7 @@ from config import (
 )
 from markov import MarkovChain
 from models import OPProgram
+from registry import OPRegistry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -258,3 +259,27 @@ async def is_chat_member(bot: object, chat_id: int, user_id: int) -> bool:
     if membership.status == ChatMemberStatus.RESTRICTED:
         return bool(getattr(membership, "is_member", False))
     return membership.status in MEMBER_STATUSES
+
+
+async def find_existing_op_membership(
+    bot: object, op_registry: OPRegistry, user_id: int
+) -> OPProgram | None:
+    """Check whether the user already sits in one of the OP chats.
+
+    Used to stop spamming the "какая у вас ОП?" welcome in the main
+    first-year chat for people who were already placed into their OP chat
+    earlier (e.g. re-joined the main chat, or the join event fired twice).
+    Checks every linked OP chat concurrently so a large number of OPs
+    doesn't slow down every single new-member greeting.
+    """
+    ops_with_chat = [op for op in op_registry.get_all().values() if op.chat_id]
+    if not ops_with_chat:
+        return None
+
+    results = await asyncio.gather(
+        *(is_chat_member(bot, op.chat_id, user_id) for op in ops_with_chat)
+    )
+    for op, is_member in zip(ops_with_chat, results):
+        if is_member:
+            return op
+    return None

@@ -25,6 +25,7 @@ from helpers import (
     build_op_response,
     build_start_deep_link,
     build_welcome_text,
+    find_existing_op_membership,
     format_admin_tag,
     get_user_mention,
     is_chat_member,
@@ -894,6 +895,19 @@ async def welcome_new_members(
                 await reply_with_connect_retry(message, text, parse_mode=ParseMode.HTML)
                 continue
 
+            existing_op = await find_existing_op_membership(
+                context.bot, op_registry, member.id
+            )
+            if existing_op is not None:
+                # Уже состоит в чате своей ОП (например, перезашёл в общий
+                # чат первого курса) — не спамим повторным "какая у вас ОП?".
+                LOGGER.info(
+                    "Пропускаем приветствие: user_id=%s уже в чате ОП %s",
+                    member.id,
+                    existing_op.code,
+                )
+                continue
+
             text = build_welcome_text(chain, mention, settings.max_words)
             sent_msg = await reply_with_connect_retry(
                 message, text, parse_mode=ParseMode.HTML
@@ -963,6 +977,18 @@ async def welcome_chat_member_update(
                 chat_id=result.chat.id,
                 text=text,
                 parse_mode=ParseMode.HTML,
+            )
+            return
+
+        existing_op = await find_existing_op_membership(
+            context.bot, op_registry, user.id
+        )
+        if existing_op is not None:
+            # Уже состоит в чате своей ОП — не спамим повторным вопросом.
+            LOGGER.info(
+                "Пропускаем приветствие (chat_member): user_id=%s уже в чате ОП %s",
+                user.id,
+                existing_op.code,
             )
             return
 
